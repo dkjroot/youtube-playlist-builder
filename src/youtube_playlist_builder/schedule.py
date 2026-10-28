@@ -78,12 +78,19 @@ def staggered_due(state, topic, completed):
         entry = {'frequency': frequency, 'slot': slot(chosen)}
         slots[str(topic['id'])] = entry
         state.set_meta('schedule_slots', slots)
-    # Monthly slots 29–31 clamp in shorter months, just like ordinary monthly dates.
-    for offset in range(1, 63):
-        candidate = (local + timedelta(days=offset)).replace(hour=0, minute=0, second=0, microsecond=0)
-        target = min(entry['slot'], calendar.monthrange(candidate.year, candidate.month)[1]) if monthly else entry['slot']
-        if slot(candidate) == target:
-            return candidate.astimezone(timezone.utc)
+    return slot_due(completed, frequency, timezone_name=zone, entry=entry)
+
+
+def slot_due(completed, frequency, timezone_name, entry, *, include_today=False):
+    """Return the next local midnight matching a persisted phase, without modifying state."""
+    local = completed.astimezone(ZoneInfo(timezone_name))
+    for offset in range(0 if include_today else 1, 63):
+        candidate = (local + timedelta(days=offset)).replace(hour=0,minute=0,second=0,microsecond=0)
+        if frequency == 'monthly':
+            match = candidate.day == min(entry['slot'],calendar.monthrange(candidate.year,candidate.month)[1])
+        else:
+            match = candidate.date().toordinal() % DAYS[frequency] == entry['slot']
+        if match: return candidate.astimezone(timezone.utc)
     raise ValueError('Could not assign a calendar slot.')
 
 

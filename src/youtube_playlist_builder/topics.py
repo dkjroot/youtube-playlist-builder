@@ -12,6 +12,7 @@ import re
 
 from .schedule import staggered_due, FREQUENCIES, next_due, parse_time, playlist_title
 from .channel_order import PRIORITIES
+from .limits import prepare_limits
 
 # These are suggestions, not a claim to understand every channel. The extra
 # names catch channels whose titles don't describe their subject.
@@ -126,6 +127,19 @@ def validate(name, fields):
         raise ValueError('Channel priorities must map YouTube channel IDs to high, medium or low.')
     if 'channels' in fields and priorities.keys() - set(fields['channels']):
         raise ValueError('Set priorities only for channels selected in this topic; add the channel first or in the same edit.')
+    ages = fields.get('channel_max_age_days', {})
+    if not isinstance(ages, dict) or any(type(n) is not int or n < 1 for n in ages.values()):
+        raise ValueError('Channel ages must be positive whole numbers of days.')
+    if 'channels' in fields and ages.keys() - set(fields['channels']):
+        raise ValueError('Set age overrides only for selected channels.')
+    maximum = fields.get('max_videos')
+    if maximum is not None and (type(maximum) is not int or maximum < 0):
+        raise ValueError('Maximum playlist size must be a whole number, zero or greater.')
+    limits = fields.get('channel_limits', {})
+    if not isinstance(limits, dict) or any(type(n) is not int or n < 0 for n in limits.values()):
+        raise ValueError('Channel slots must be whole numbers, zero or greater.')
+    if 'channels' in fields and limits.keys() - set(fields['channels']):
+        raise ValueError('Assign slots only to channels selected in this topic.')
     for key in ('include_words', 'exclude_words'):
         if any(not word.strip() for word in fields.get(key, [])):
             raise ValueError('Title filters cannot be empty.')
@@ -133,7 +147,11 @@ def validate(name, fields):
 
 def edit_topic(state, topic, fields):
     """Save validated changes, refuse unresolved writes and recalculate or invalidate due times."""
+    prepare_limits(topic, fields)
+    if 'channel_max_age_days' in fields and fields['channel_max_age_days'].keys() - set(fields.get('channels', topic['channels'])):
+        raise ValueError('Set age overrides only for selected channels.')
     if 'channels' in fields:
+        fields['channel_max_age_days'] = {cid:age for cid,age in fields.get('channel_max_age_days',topic.get('channel_max_age_days',{})).items() if cid in fields['channels']}
         # Dropped channels must not retain a hidden priority if they are re-added.
         fields['channel_priorities'] = {cid: level for cid, level in
             fields.get('channel_priorities', topic['channel_priorities']).items() if cid in fields['channels']}
@@ -145,7 +163,7 @@ def edit_topic(state, topic, fields):
         raise ValueError('Reconcile the interrupted update before editing this topic.')
     if 'frequency' in fields and topic['last_success'] and topic['next_due']:
         fields['next_due'] = staggered_due(state, dict(topic, **fields), parse_time(topic['last_success'])).isoformat()
-    if any(key in fields for key in ('description', 'channels', 'channel_priorities', 'include_words', 'exclude_words', 'max_age_days', 'playlist_name')):
+    if any(key in fields for key in ('max_videos', 'channel_limits', 'channel_max_age_days', 'description', 'channels', 'channel_priorities', 'include_words', 'exclude_words', 'max_age_days', 'playlist_name')):
         fields['next_due'] = None
     state.update(topic['id'], **fields)
 
@@ -156,6 +174,7 @@ def describe(topic):
              f"max age {topic['max_age_days']} days; {len(topic['channels'])} channels",
              f"  Playlist: {playlist_title(topic)}",
              f"  Last completed: {topic['last_success'] or 'never'}; next due: {topic['next_due'] or 'now'}"]
+    lines.append(f"  Maximum videos: {topic.get('max_videos') if topic.get('max_videos') is not None else 'unlimited'}")
     if topic['playlist_id']:
         lines.append(f"  https://www.youtube.com/playlist?list={topic['playlist_id']}")
     if topic['last_error']:

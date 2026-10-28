@@ -28,6 +28,8 @@ from .state import State
 from .schedule import initialise_staggering, staggered_due, FREQUENCIES, utcnow, due_topics, next_due, parse_time
 from .topics import load_subscriptions, suggest, validate, edit_topic, describe
 from .diagnostics import configure as configure_logging, logger
+from .limits import prepare_limits
+from .rebalance import redistribute
 from .sync import Sync
 from .llm import Classifier, settings as llm_settings
 
@@ -40,6 +42,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--state", type=Path, default=Path(".local/playlists.sqlite3"))
     result.add_argument("--llm-config", type=Path, default=Path(".local/llm.json"))
     commands = result.add_subparsers(dest="command")
+    web = commands.add_parser('web', help='Open local browser management at 127.0.0.1.')
+    web.add_argument('--port', type=positive, default=8765)
+    web.add_argument('--no-browser', action='store_true')
     commands.add_parser('menu', help='Open the interactive menu (also the default in a terminal).')
     auth = commands.add_parser("auth", help="Sign in with Google.")
     auth.add_argument("--write-access", action="store_true", help="Also request permission to manage playlists.")
@@ -64,6 +69,9 @@ def parser() -> argparse.ArgumentParser:
     for action in ('add', 'set'):
         change = actions.add_parser(action)
         change.add_argument('name')
+        change.add_argument('--max-videos', type=nonnegative, help='Overall playlist capacity; 0 restores unlimited. Redistributes slots evenly.')
+        change.add_argument('--channel-max-age', action='append', default=[], type=channel_slots, metavar='CHANNEL_ID=DAYS', help='Override a channel age; 0 restores topic default.')
+        change.add_argument('--channel-slots', action='append', default=[], type=channel_slots, metavar='CHANNEL_ID=COUNT', help='Override a channel allocation and recalculate the total.')
         change.add_argument('--description', help='Describe what belongs in this topic for the LLM.')
         change.add_argument('--frequency', choices=FREQUENCIES)
         change.add_argument('--max-age', type=positive, help='Maximum video age in days.')
@@ -98,6 +106,8 @@ def parser() -> argparse.ArgumentParser:
             operation.add_argument('--refresh-subscriptions', action='store_true',
                                    help='Refresh subscribed channels now; uploads are always checked live.')
             operation.add_argument('--preview', action='store_true', help='Read and show proposed changes without writing to YouTube.')
+    rebalance = commands.add_parser('redistribute', help='Spread enabled topic schedules using local forecast costs, with no API calls.')
+    rebalance.add_argument('--rate', type=float, default=1.0, help='Assumed matching videos per channel per day.')
     commands.add_parser('status', help='Show the queue, schedules, and local daily quota usage.')
     settings = commands.add_parser('settings', help='View or set the local daily API budget (default 9500 units).')
     settings.add_argument('--subscription-cache-hours', type=nonnegative, metavar='HOURS',
@@ -110,6 +120,14 @@ def parser() -> argparse.ArgumentParser:
     settings.add_argument('--daily-budget', type=positive)
     settings.add_argument('--timezone', help='Calendar scheduling timezone, such as Europe/London (default UTC).')
     return result
+
+
+def channel_slots(value):
+    """Parse a channel capacity override; membership is checked against the final selection."""
+    channel_id, separator, count = value.partition('=')
+    if not separator or not channel_id:
+        raise argparse.ArgumentTypeError('Use CHANNEL_ID=COUNT.')
+    return channel_id, nonnegative(count)
 
 
 def channel_priority(value):
@@ -160,6 +178,10 @@ def local_command(args, state):
     These commands never modify YouTube; LLM suggestions may contact the model.
     Topic edits invalidate due times where the desired playlist contents change.
     """
+    if args.command == 'redistribute':
+        result = redistribute(state,rate=args.rate)
+        print(result['message'])
+        return 0
     if args.command in ('channels', 'suggest-topics'):
         channels = load_subscriptions(args.subscriptions)
         if args.command == 'channels':
@@ -248,6 +270,13 @@ def local_command(args, state):
                 if not matches:
                     raise ValueError('No matching suggestion. Use suggest-topics to see the names, or supply --channel IDs.')
                 fields['channels'] = sorted(set(fields['channels']) | {item['channel_id'] for item in matches[0]['channels']})
+            if args.channel_max_age:
+                fields['channel_max_age_days'] = {cid:days for cid,days in args.channel_max_age if days}
+            if args.max_videos is not None:
+                fields['max_videos'] = args.max_videos or None
+            if args.channel_slots:
+                fields['channel_limits'] = dict(args.channel_slots)
+            prepare_limits({}, fields)
             validate(name, fields)
             added = state.add(name, **fields)
             initialise_staggering(state, utcnow())
@@ -261,6 +290,8 @@ def local_command(args, state):
             print('Channel priorities (default medium; weighted high:medium:low = 3:2:1):')
             for channel_id in topic['channels']:
                 print(f"  {channel_id}: {topic['channel_priorities'].get(channel_id, 'medium')}")
+            print('Channel age overrides: ' + str(topic.get('channel_max_age_days', {})))
+            print('Channel slots: ' + str(topic.get('channel_limits', {})))
             print('Include title phrases: ' + ', '.join(topic['include_words']))
             print('Exclude title phrases: ' + ', '.join(topic['exclude_words']))
         elif args.action == 'remove':
@@ -284,6 +315,18 @@ def local_command(args, state):
                 if set(dict(args.channel_priority)) - set(selected):
                     raise ValueError('Set priorities only for channels selected in this topic; add the channel first or in the same edit.')
                 fields['channel_priorities'] = dict(topic['channel_priorities'], **dict(args.channel_priority))
+            if args.max_videos is not None:
+                fields['max_videos'] = args.max_videos or None
+            if args.channel_slots:
+                fields['channel_limits'] = dict(args.channel_slots)
+            if args.channel_max_age:
+                ages = dict(topic.get('channel_max_age_days', {}))
+                for cid,days in args.channel_max_age:
+                    if cid not in fields.get('channels',topic['channels']):
+                        raise ValueError('Set age overrides only for selected channels.')
+                    if days: ages[cid] = days
+                    else: ages.pop(cid,None)
+                fields['channel_max_age_days'] = ages
             edit_topic(state, topic, fields)
             print(describe(state.by_id(topic['id'])))
         return 0
@@ -305,6 +348,13 @@ def main(argv=None) -> int:
         configure_logging(args.state.parent / 'runtime.log')
         logger.info('Command=%s preview=%s all=%s', args.command or 'menu',
                     getattr(args, 'preview', False), getattr(args, 'all', False))
+        if args.command == 'web':
+            if args.port > 65535:
+                raise ValueError('Choose a port between 1 and 65535.')
+            if args.state.resolve() in {args.token.resolve(),args.client_secrets.resolve()}:
+                raise ValueError('The topic database must not use a credential path.')
+            from .web import serve
+            return serve(args)
         if args.command == 'menu' or args.command is None:
             if args.command is None and not sys.stdin.isatty():
                 parser().print_help()
@@ -313,7 +363,7 @@ def main(argv=None) -> int:
             return run_menu(args, main)
         if args.state.resolve() in {args.token.resolve(), args.client_secrets.resolve()}:
             raise ValueError('The topic database must not use the credentials or token path.')
-        if args.command in ('topics', 'status', 'settings', 'channels', 'suggest-topics', 'auto', 'update', 'reconcile'):
+        if args.command in ('topics', 'status', 'settings', 'channels', 'suggest-topics', 'auto', 'update', 'reconcile', 'redistribute'):
             state = State(args.state)
             try:
                 with state.locked():

@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1" name="viewport"/>
+  <meta content="__TOKEN__" name="yt-local"/>
+  <title>
+   Subscription playlists
+  </title>
+  <link href="/app.css" rel="stylesheet"/>
+  <script defer="" src="/app.js">
+  </script>
+ </head>
+ <body>
+  <header>
+   <div>
+    <span class="eyebrow">
+     LOCAL APPLICATION
+    </span>
+    <h1>
+     YouTube playlist manager
+    </h1>
+    <p>
+     Topics, channel limits and update schedules.
+    </p>
+   </div>
+   <div class="actions">
+    <button class="primary" id="auto">
+     Update due topics
+    </button>
+    <button id="all">
+     Update all
+    </button>
+    <button id="settings-open">
+     Settings
+    </button>
+   </div>
+  </header>
+  <div aria-live="polite" id="notice" role="status">
+  </div>
+  <main>
+   <section class="summary" id="summary">
+   </section>
+   <section class="panel forecast">
+    <div class="section-head">
+     <div>
+      <h2>
+       Quota forecast
+      </h2>
+      <p>
+       Quota planning, without making API calls. Save topic edits to include them here.
+      </p>
+     </div>
+     <div class="actions forecast-controls">
+      <label>
+       Assumed matching videos / channel / day
+       <input id="rate" max="1000" min="0" step="0.1" type="number" value="1"/>
+      </label>
+      <label>
+       Graph
+       <select id="forecast-mode">
+        <option value="budget">
+         Budget &amp; carry-over
+        </option>
+        <option value="demand">
+         Requested work
+        </option>
+       </select>
+      </label>
+      <label>
+       Period
+       <select id="forecast-days">
+        <option value="auto">Automatic: all schedules</option>
+        <option value="10">10 days</option>
+        <option value="28">4 weeks</option>
+        <option value="62">2 months</option>
+        <option value="90">3 months</option>
+       </select>
+      </label>
+      <button id="redistribute" title="Balance estimated costs across days, keeping frequencies and unfinished work." type="button">
+       Redistribute schedules
+      </button>
+     </div>
+    </div>
+    <div class="chart-scroll">
+     <div class="chart" id="chart">
+     </div>
+    </div>
+    <div id="forecast-detail">
+    </div>
+    <p class="forecast-backlog" id="forecast-backlog">
+    </p>
+    <p class="muted" id="assumptions">
+    </p>
+   </section>
+   <div class="workspace">
+    <aside class="panel">
+     <div class="section-head">
+      <h2>
+       Topics
+      </h2>
+      <button id="new-topic">
+       + New
+      </button>
+     </div>
+     <div id="topic-list">
+     </div>
+     <button id="suggest">
+      Suggest from subscriptions
+     </button>
+     <div id="suggestions">
+     </div>
+    </aside>
+    <section class="panel editor">
+     <div class="section-head">
+      <h2 id="editor-title">
+       Choose a topic
+      </h2>
+      <a hidden="" id="playlist-link" rel="noreferrer" target="_blank">
+       Open playlist ↗
+      </a>
+     </div>
+     <form hidden="" id="topic-form">
+      <label class="check topic-enabled">
+       <input aria-describedby="enabled-help" checked="" id="enabled" type="checkbox"/>
+       Auto-update this topic
+      </label>
+      <p class="muted" id="enabled-help">
+       Include this topic in scheduled and update-all runs. You can still update it manually when this is off.
+      </p>
+      <div class="fields">
+       <label>
+        Name
+        <input id="name" maxlength="80" required=""/>
+       </label>
+       <label>
+        Playlist name
+        <input id="playlist-name" placeholder="Default: sub_topic"/>
+       </label>
+       <label>
+        Update frequency
+        <select id="frequency">
+        </select>
+       </label>
+       <label>
+        Default maximum age (days)
+        <input id="max-age" min="1" required="" type="number" value="7"/>
+       </label>
+       <fieldset class="limit-settings">
+        <legend>
+         Playlist size
+        </legend>
+        <label class="check">
+         <input id="limited" type="checkbox"/>
+         Limit playlist size
+        </label>
+        <label>
+         Overall video limit
+         <input id="maximum" min="0" type="number" value="40"/>
+         <small>
+          Changing this number divides slots evenly.
+         </small>
+        </label>
+       </fieldset>
+       <label>
+        Topic description
+        <textarea id="description" maxlength="2000" rows="2"></textarea>
+       </label>
+      </div>
+      <details>
+       <summary>
+        Title filters
+       </summary>
+       <label>
+        Include any phrase (one per line)
+        <textarea id="includes" rows="2"></textarea>
+       </label>
+       <label>
+        Exclude any phrase (one per line)
+        <textarea id="excludes" rows="2"></textarea>
+       </label>
+      </details>
+      <div class="section-head">
+       <div>
+        <h3>
+         Channel allocations
+        </h3>
+        <p id="allocation-info">
+        </p>
+       </div>
+      </div>
+      <div id="dropzone" tabindex="0">
+       <p>
+        Drag channels here from your subscriptions, or use their + buttons.
+       </p>
+       <div class="table-wrap">
+        <table>
+         <thead>
+          <tr>
+           <th>
+            Channel
+           </th>
+           <th>
+            Priority
+           </th>
+           <th>
+            Slots
+           </th>
+           <th>
+            Age override (days)
+           </th>
+           <th>
+           </th>
+          </tr>
+         </thead>
+         <tbody id="channel-rows">
+         </tbody>
+        </table>
+       </div>
+      </div>
+      <p class="muted">
+       Empty channel slots stay empty. Newer matching videos replace that channel’s oldest entries. Clearing an age override uses the topic default.
+      </p>
+      <div class="actions">
+       <button class="primary" id="save-topic" type="submit" aria-live="polite">
+        Save topic
+       </button>
+       <button id="preview" type="button">
+        Preview update
+       </button>
+       <button id="update" type="button">
+        Update now
+       </button>
+       <button id="reconcile" type="button">
+        Reconcile
+       </button>
+       <button class="danger" id="remove-topic" type="button">
+        Remove topic
+       </button>
+      </div>
+      <p class="muted">
+       Saving only changes local settings. Preview uses API reads/model calls; Update applies playlist changes. Shrinking an existing playlist needs individual removals and may take several quota days.
+      </p>
+     </form>
+    </section>
+    <aside class="panel library">
+     <div class="section-head">
+      <h2>
+       Subscriptions
+      </h2>
+      <button id="refresh">
+       Refresh
+      </button>
+     </div>
+     <input aria-label="Find a subscribed channel" id="channel-search" placeholder="Find a channel…" type="search"/>
+     <div id="channel-library">
+     </div>
+    </aside>
+   </div>
+   <section class="panel">
+    <div class="section-head">
+     <h2>
+      Activity
+     </h2>
+     <span id="job-status">
+      Ready
+     </span>
+    </div>
+    <pre aria-live="polite" id="activity">Updates only run when you request them.</pre>
+   </section>
+  </main>
+  <dialog id="settings">
+   <form id="settings-form">
+    <h2>
+     Settings
+    </h2>
+    <label>
+     Local daily API ceiling
+     <input id="daily-budget" min="1" required="" type="number"/>
+    </label>
+    <label>
+     Calendar timezone
+     <input id="timezone" required=""/>
+    </label>
+    <label>
+     Matching mode
+     <select id="mode">
+      <option value="text">
+       Text
+      </option>
+      <option value="llm">
+       LLM
+      </option>
+     </select>
+    </label>
+    <label>
+     Minimum video length (seconds; 0 disables)
+     <input id="min-length" min="0" required="" type="number"/>
+    </label>
+    <label>
+     Subscription-list cache (hours; uploads stay live)
+     <input id="cache-hours" max="720" min="0" required="" type="number"/>
+    </label>
+    <p class="muted">
+     LLM endpoint and credentials stay in your local configuration. The daily ceiling does not reset usage or raise Google’s quota.
+    </p>
+    <div class="actions">
+     <button class="primary">
+      Save settings
+     </button>
+     <button id="settings-close" type="button">
+      Cancel
+     </button>
+    </div>
+   </form>
+  </dialog>
+ </body>
+</html>

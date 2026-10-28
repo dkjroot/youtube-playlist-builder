@@ -26,4 +26,5 @@ where = ["src"]
 
 
 [tool.setuptools.package-data]
+"youtube_playlist_builder" = ["web_assets/*"]
 "youtube_playlist_builder.vendor.iris" = ["LICENSE"]

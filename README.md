@@ -13,7 +13,7 @@ through a hundred chess videos first. Old videos will drop out as they pass the
 chosen age limit.
 
 It runs in Python on macOS or Linux and uses the YouTube Data API. You can manage
-topics through a terminal menu or command-line options, set their update frequency,
+topics through a local web interface, terminal menu or command-line options, set their update frequency,
 and keep a rolling private playlist for each one. Matching can use simple channel
 selections and title filters, or an optional local or hosted language model.
 
@@ -190,6 +190,152 @@ yt-playlists --client-secrets /path/to/client.json --token /path/to/token.json s
 ```
 
 ## Using topics and playlists
+
+### Local web management
+
+Start the browser interface from the project directory, with the same environment
+and credentials you use for the command line:
+
+```sh
+source .venv/bin/activate
+# If your model key is in .env, load it as you normally do before starting.
+yt-playlists web
+```
+
+The app opens at `http://127.0.0.1:8765` and stays running in that terminal until
+you press Ctrl-C. Use `web --no-browser` if you'd rather open the address yourself,
+or `web --port 8766` if the normal port is busy. It runs locally, uses the same
+SQLite database, and has a dark theme. No node build or separate frontend install
+is needed. Global `--state`, credential and `--llm-config` options go before `web`
+just as they do before other commands.
+
+Choose a topic to edit its schedule, age limit, name, description and filters.
+Drag channels from the searchable subscriptions list into the editor, or use
+its + buttons. Hover a channel name to read its description from the local
+subscription export. Each channel has a priority dropdown, slot allocation and
+optional age override. Save commits local settings; it doesn't update YouTube. Use Preview,
+Update now, Update due topics or Update all to request that work explicitly.
+Activity shows progress and budget pauses. Opening the page spends no API quota.
+
+Refresh loads a fresh subscription export for the channel list and invalidates
+the managed subscription cache for the next update. Suggest from subscriptions
+uses your selected matching mode and lets you choose a suggestion as the starting
+point for a new topic. Topic removal keeps its YouTube playlist. Existing settings,
+OAuth setup and model keys are shared with the CLI; the page doesn't display keys
+or replace the initial Google sign-in workflow.
+
+### Playlist sizes and channel allocations
+
+The default is **unlimited**, preserving the original age-based behaviour. To
+limit a topic, enable Limit playlist size in the web editor and enter a total.
+That divides the slots evenly between assigned channels, with any remainder
+distributed deterministically. There is no cross-cutting or “other videos” pool.
+A small total may give some channels zero slots, which you can adjust individually.
+
+Changing a channel's allocation recalculates the overall total without changing
+its neighbours. Channels keep firm maxima: if one has four slots and only one
+eligible video, its other three slots stay empty. Newer matches replace that
+channel's oldest entries. Adding a channel to a capped topic preserves existing
+allocations and gives it an average-sized share, increasing the total; removing
+one removes its allocation. Explicitly changing the overall total redistributes
+all channels evenly again. Uncheck Limit playlist size to restore unlimited.
+
+These controls are also available from the CLI:
+
+```sh
+yt-playlists topics set engineering --max-videos 40
+yt-playlists topics set engineering --channel-slots CHANNEL_ID=4
+yt-playlists topics set engineering --max-videos 0
+```
+
+Replace `CHANNEL_ID` with an assigned channel ID. `--max-videos 0` restores
+unlimited. Setting an individual channel to zero slots excludes its videos from
+a capped topic. Changing limits makes the topic due, but doesn't immediately
+modify the playlist. Preview first: reducing an existing playlist from hundreds
+of entries still needs individual removals. Cleanup shares topic turns and can
+span several quota days. For capped topics, obsolete entries are removed before
+new additions, so a partially completed replacement doesn't add on top of a full
+allocation. Unlimited topics keep the existing alternating add/remove workflow.
+
+### Channel-specific maximum ages
+
+The topic's maximum age is the default for all its channels. In the editor, leave
+Age override blank to inherit it, or enter a different number of days for that
+channel. For example, engineering can default to 7 days while a channel that
+uploads rarely keeps videos eligible for 180 days:
+
+```sh
+yt-playlists topics set engineering --max-age 7
+yt-playlists topics set engineering --channel-max-age CHANNEL_ID=180
+```
+
+Use `--channel-max-age CHANNEL_ID=0` to restore inheritance. Overrides work in
+both capped and unlimited topics. This is the maximum **age** of a published
+video, separate from the minimum video **length** setting measured in seconds.
+
+A six-month window is cheap for a channel with a few uploads, but scanning six
+months of a busy channel can mean many pages and model calls. Capped discovery
+works incrementally: it stops scanning a channel once enough eligible matches
+fill its allocation. In a test with 1,800 uploads and four slots, it used one feed
+page, one video-details request and one model batch. Filters can still force a
+deeper scan when few videos match. Unlimited topics continue scanning the whole
+configured age window.
+
+### Quota forecasts and schedule redistribution
+
+The web interface offers two local forecast views:
+
+- **Budget & carry-over** is the default. It applies the local daily ceiling,
+  includes today's recorded usage, and carries estimated unfinished work into
+  later days. Each bar stacks funded work in green and the remaining queue in
+  orange, so growing excess rises above the daily ceiling. Hover to see the
+  queue size and its change from the previous day. A confirmed Google quota
+  exhaustion prevents further forecast
+  spending today. The backlog figure shows the work still waiting at the end of
+  the displayed period, even when every daily bar fits within the ceiling.
+- **Requested work** shows estimated demand before the daily ceiling. It helps
+  identify which scheduled days are overloaded; it assumes those scheduled
+  updates finish rather than rolling their work into later dates.
+
+Automatic period covers at least two cycles of the longest enabled frequency,
+with a minimum of four weeks. Monthly topics generally extend it to about two
+months. You can choose 10 days, four weeks, two months or three months instead.
+Scroll the chart horizontally to see all days and hover for daily figures.
+
+Both views use saved schedules, current playlist entries, allocations and age
+limits. Adjust **assumed matching videos per channel per day** to explore busier
+or quieter publishing. This rate is your assumption, not measured channel history.
+Save topic edits to include them in the next calculation. The dashed line is the
+local ceiling; orange demand bars exceed it. Calculating either view spends no
+YouTube or model quota.
+
+Budget carry-over is an aggregate work-queue estimate, not an exact simulation
+of future playlist contents. Reads are approximate, and mutations are charged in
+whole 50-unit operations. Delayed videos can expire or be superseded, and a real
+resumed update may need fresh reads. The baseline demand also assumes successful
+scheduled updates, so the carried queue can overestimate work that would merge
+or disappear in practice. It doesn't know future uploads, Google’s actual quota
+allowance or LLM prices. Legacy entries without channel attribution are spread
+evenly for the estimate until attribution is known.
+
+Use **Redistribute schedules** beside the chart to spread recurring work across
+days. It uses the selected upload-rate assumption and estimates costs over at
+least eight weeks (longer if needed), considering all active frequencies. It only
+accepts arrangements that improve estimated peaks or spread, rather than moving
+fortnightly work just past the visible chart. Topic cards show the next scheduled
+date afterwards. The same operation is available from menu option19 or:
+
+```sh
+yt-playlists redistribute --rate 1
+```
+
+This changes saved calendar slots and next update dates, not the chosen update
+frequencies, last successful update times or quota counters. Disabled topics and
+daily due dates stay as they are. Pending and unfinished updates remain due;
+their future repeats can still get better slots. A first-fill backlog, a large
+cleanup or more total demand than your allowance can therefore still produce
+spikes. Redistribution doesn't update YouTube or make API/model calls. It uses
+saved topic settings; unsaved form changes aren't included or discarded.
 
 Run `yt-playlists` for the interactive menu, or use the commands below in scripts.
 While entering a value or choosing an option, press **Escape** to abandon that

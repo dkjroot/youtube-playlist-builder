@@ -81,9 +81,17 @@ class State:
         # stored on the topic so its successful turn position survives restarts.
         columns = {row[1] for row in self.db.execute('PRAGMA table_info(topics)')}
         with self.db:
-            for column in ('channel_priorities', 'channel_rotation'):
+            for column in ('channel_priorities', 'channel_rotation', 'channel_limits', 'channel_max_age_days'):
                 if column not in columns:
                     self.db.execute(f"ALTER TABLE topics ADD COLUMN {column} TEXT NOT NULL DEFAULT '{{}}'")
+
+        if 'max_videos' not in columns:
+            with self.db:
+                self.db.execute('ALTER TABLE topics ADD COLUMN max_videos INTEGER')
+
+        if 'channel_id' not in {row[1] for row in self.db.execute('PRAGMA table_info(items)')}:
+            with self.db:
+                self.db.execute('ALTER TABLE items ADD COLUMN channel_id TEXT')
 
     def close(self):
         """Release the connection after the CLI operation, even if an API request failed."""
@@ -119,7 +127,7 @@ class State:
         if row is None:
             raise ValueError('Topic not found.')
         topic = dict(row)
-        for key in ('channels', 'include_words', 'exclude_words', 'channel_priorities', 'channel_rotation'):
+        for key in ('channels', 'include_words', 'exclude_words', 'channel_priorities', 'channel_rotation', 'channel_limits', 'channel_max_age_days'):
             topic[key] = json.loads(topic[key])
         return topic
 
@@ -149,10 +157,10 @@ class State:
         """Apply allowlisted fields without committing; callers can group related state changes."""
         allowed = {'description', 'name', 'playlist_name', 'frequency', 'max_age_days', 'enabled', 'channels',
                    'include_words', 'exclude_words', 'playlist_id', 'remote_title', 'last_success',
-                   'next_due', 'last_attempt', 'last_error', 'reconciled_at', 'channel_priorities', 'channel_rotation'}
+                   'next_due', 'last_attempt', 'last_error', 'reconciled_at', 'channel_priorities', 'channel_rotation', 'channel_limits', 'max_videos', 'channel_max_age_days'}
         if fields.keys() - allowed:
             raise ValueError('Unknown topic field.')
-        values = {key: json.dumps(value) if key in ('channels', 'include_words', 'exclude_words', 'channel_priorities', 'channel_rotation')
+        values = {key: json.dumps(value) if key in ('channels', 'include_words', 'exclude_words', 'channel_priorities', 'channel_rotation', 'channel_limits', 'channel_max_age_days')
                   else value for key, value in fields.items()}
         if values:
             self.db.execute(f"UPDATE topics SET {', '.join(key + '=?' for key in values)} WHERE id=?",
@@ -176,8 +184,8 @@ class State:
 
     def put_item(self, topic_id, item):
         """Record one returned item ID inside the caller’s success/intent-clearing transaction."""
-        self.db.execute('INSERT OR REPLACE INTO items VALUES (?,?,?,?,?)',
-                        (topic_id, item['item_id'], item['video_id'], item.get('published_at'), item.get('title', '')))
+        self.db.execute('INSERT OR REPLACE INTO items(topic_id,item_id,video_id,published_at,title,channel_id) VALUES (?,?,?,?,?,?)',
+                        (topic_id, item['item_id'], item['video_id'], item.get('published_at'), item.get('title', ''), item.get('channel_id')))
 
     def pending(self, topic_id):
         """Return the unresolved remote write intent, or None when state is unambiguous."""

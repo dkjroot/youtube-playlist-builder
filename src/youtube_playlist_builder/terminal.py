@@ -6,6 +6,7 @@ only prints elapsed time; API calls and SQLite stay on their calling thread.
 """
 from contextlib import contextmanager
 import sys
+import os
 import threading
 import time
 
@@ -44,14 +45,14 @@ def ask(message):
 
 def progress(message):
     """Emit flushed human progress only to terminal stderr, keeping JSON stdout parseable."""
-    if sys.stderr.isatty():
+    if sys.stderr.isatty() or os.environ.get('YT_PLAYLISTS_PROGRESS') == '1':
         print(message, file=sys.stderr, flush=True)
 
 
 @contextmanager
 def waiting(message):
     """Keep slow requests visibly alive, without altering JSON/piped stdout."""
-    if not sys.stderr.isatty():
+    if not (sys.stderr.isatty() or os.environ.get('YT_PLAYLISTS_PROGRESS') == '1'):
         yield
         return
     progress(message)

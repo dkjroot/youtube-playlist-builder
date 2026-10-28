@@ -171,3 +171,69 @@ suite exercises partial writes, lost replies, account ownership, scheduling,
 filters and idempotence. `test_quota_efficiency.py` checks actual request counts,
 cross-channel batching and reuse across different age windows. Terminal tests
 feed real key sequences into the line editor to check Escape and arrow editing.
+
+## Local web management and capacity planning
+
+`web.py` serves packaged `web_assets` on IPv4 loopback only. Page/state reads never
+make remote calls. Topic mutations use the shared validation, `limits.prepare_limits`
+and state lock. Background preview/update/discovery operations are allowlisted
+child CLI processes with the launching paths/environment. Two reader threads drain
+stdout/stderr to avoid pipe deadlocks; bounded job logs are polled by the UI.
+Only one web job runs at a time, and the existing cross-process file lock still
+protects it from terminal commands. Closing the server terminates its child;
+uncertain writes retain the usual pending intent for recovery.
+
+API requests require a per-launch token and an exact loopback Host; foreign
+Origins are rejected. Only three fixed static assets are served. Credential
+files, arbitrary commands and arbitrary filesystem paths aren't HTTP resources.
+Personal metadata is rendered as text nodes. Dark CSS and plain functional copy
+are defaults. This is a local management server, not a public deployment setup.
+
+`limits.py` distinguishes unlimited (`max_videos IS NULL`) from a finite slot
+allocation. Explicit total changes divide slots evenly; per-channel edits update
+the sum. Zero channel slots exclude that channel. Adding/removing channels
+preserves retained allocations and adjusts the total. Topic maximum ages can be
+overridden per channel through `channel_max_age_days`, with inheritance when absent.
+
+For a capped topic, `Sync.limited_videos` walks feed IDs lazily in 50-ID windows,
+resolves metadata, applies ordinary eligibility and model decisions in bounded
+batches, then stops when that channel's allocation is full. Thus long age windows
+need not force full historical scans of busy channels. Unknown/unmatched videos
+may still require more pages. All selected channels must complete discovery before
+content changes. The desired set contains only each channel's newest eligible
+slots. Cleanup runs before insertions for finite plans to avoid adding beyond
+capacity during a quota pause; unlimited plans retain alternating cleanup/adds.
+
+`forecast.py` is a pure local simulation over schedules, current items and an
+explicit matching-upload-rate assumption. It models replacements, expirations,
+creation and approximate reads over the selected period without consuming quota or updating
+success dates. It is not a measured publishing model, and assumes earlier updates
+complete. UI labels explain these assumptions. Item channel IDs are an additive
+migration: new insertions save them, reconciliation uses returned owner IDs, and
+ordinary updates attribute legacy entries using metadata already fetched.
+
+## Redistributing schedules and budget carry-over
+
+`rebalance.py` precomputes each enabled topic's forecast costs for alternative
+calendar phases. Daily topics keep their dates; pending/partial updates preserve
+their first due time. A bounded coordinate search over at least56days (or the
+automatic visible horizon, whichever is longer) minimises peak daily cost, then
+sum of squared daily costs. Equal-cost arrangements stay put. A final combined
+forecast includes shared read costs before accepting the plan. Slot metadata and
+next dates commit atomically under the state lock. Success timestamps, quota,
+rotation cursors, disabled topics and remote playlists are not modified.
+
+`slot_due` is the shared pure phase calculator used by both actual completion
+scheduling and forecasting, including month-end clamping. The automatic graph
+span covers two longest-frequency cycles plus the first scheduled date, at least
+28days and bounded to366. Explicit spans use the same forecast engine.
+
+Forecast demand and execution capacity are separate views. `budget_carryover`
+queues the demand stream against the local ceiling, accounts for recorded usage
+and a server-exhausted flag today, and funds reads/50-unit mutations in whole
+operations. It returns requested/recorded/additional/carried amounts without
+claiming exact completed video counts. This is deliberately an aggregate scenario:
+real deferred updates can merge, expire, or require fresh discovery, so queued
+work may be overstated. The UI exposes this limitation and the matching-upload
+rate assumption. The web endpoint defaults to budget view; the planner's default
+remains demand so scheduling optimisation cannot hide overload by clipping bars.

@@ -92,6 +92,7 @@ def run_menu(args, runner):
                   ' 16. Update all enabled topics (ignore frequency)\n'
                   ' 17. Minimum video length\n'
                   ' 18. Subscription channel cache (uploads always refresh)\n'
+                  ' 19. Redistribute topic schedules\n'
                   '  0. Exit\n'
                   'Press Escape at any prompt to return here.')
             action = ask('Choose: ').strip()
@@ -212,6 +213,9 @@ def run_menu(args, runner):
                 run('suggest-topics', '--subscriptions', str(export))
             elif action == '7':
                 run('channels', ask('Search: ').strip(), '--subscriptions', str(export))
+            elif action == '19':
+                rate = ask('Assumed matching videos per channel per day [1]: ').strip() or '1'
+                run('redistribute', '--rate', rate)
             elif action == '18':
                 run('settings')
                 choice = choose('Subscription channel cache', ['Refresh on the next update', 'Set cache lifetime'])

@@ -9,8 +9,9 @@ Do not remove content after a partial discovery or uncertain model response.
 
 from collections import deque
 from datetime import timedelta
-from itertools import zip_longest
+from itertools import zip_longest, islice
 
+from .limits import channel_age_days
 from .videos import duration_seconds
 from .channel_order import addition_turns
 from .terminal import progress
@@ -199,17 +200,79 @@ class Sync:
         ids = set()
         for index, channel_id in enumerate(selected, 1):
             progress(f"{topic['name']}: reading channel {index}/{len(selected)}…")
-            ids.update(self.upload_ids(channel_id, cutoff))
+            ids.update(self.upload_ids(channel_id, now - timedelta(days=channel_age_days(topic, channel_id))))
         # Fill batches across channels: 40 quiet channels can share one metadata read,
         # rather than paying for a mostly empty request for each individual channel.
         videos = self.details(ids)
         include = [word.casefold() for word in topic['include_words']]
         exclude = [word.casefold() for word in topic['exclude_words']]
         return {key: video for key, video in videos.items()
-                if cutoff <= parse_time(video['published_at']) <= now
+                if now - timedelta(days=channel_age_days(topic, video['channel_id'])) <= parse_time(video['published_at']) <= now
                 and video['channel_id'] in selected
                 and (not include or any(word in video['title'].casefold() for word in include))
                 and not any(word in video['title'].casefold() for word in exclude)}
+
+    def admit(self, topic, desired):
+        """Apply duration/model eligibility before a video can occupy a channel slot."""
+        minimum = self.state.meta('minimum_video_seconds', 0)
+        retained = {}
+        if minimum:
+            existing = {item['video_id'] for item in self.state.items(topic['id'])}
+            excluded = {key: video for key, video in desired.items()
+                        if video['duration_seconds'] is None or video['duration_seconds'] < minimum}
+            retained = {key: video for key, video in excluded.items() if key in existing}
+            desired = {key: video for key, video in desired.items() if key not in excluded}
+            self.report(f'Minimum length {minimum}s: skipping {len(excluded) - len(retained)} new videos '
+                        f'(too short or duration unavailable); keeping {len(retained)} existing entries.')
+        if self.classifier:
+            desired = self.classifier.match(topic, desired)
+        return {**desired, **retained}
+
+    def limited_videos(self, topic, now):
+        """Scan each channel lazily until its hard allocation has enough matches.
+
+        A six-month age window remains cheap for a quiet channel. Busy channels
+        stop after filling their slots instead of classifying their whole history.
+        If filters reject many uploads, scanning may still need the full age window.
+        No partial selection is returned after a read/model failure.
+        """
+        cutoff = now - timedelta(days=topic['max_age_days'])
+        if not any(topic['channel_limits'].values()):
+            return {}
+        selected = sorted(set(topic['channels']) & self.subscriptions())
+        selected = [cid for cid in selected if topic['channel_limits'].get(cid, 0) > 0]
+        self.resolve_uploads(selected)
+        desired = {}
+        for index, cid in enumerate(selected, 1):
+            cutoff = now - timedelta(days=channel_age_days(topic, cid))
+            limit = topic['channel_limits'][cid]
+            progress(f"{topic['name']}: channel {index}/{len(selected)}, filling up to {limit} slots…")
+            iterator = iter(self.upload_ids(cid, cutoff))
+            matches = {}
+            while len(matches) < limit:
+                ids = list(islice(iterator, 50))
+                if not ids:
+                    break
+                videos = self.details(ids)
+                include = [word.casefold() for word in topic['include_words']]
+                exclude = [word.casefold() for word in topic['exclude_words']]
+                eligible = sorted((video for video in videos.values()
+                    if video['channel_id'] == cid and cutoff <= parse_time(video['published_at']) <= now
+                    and (not include or any(word in video['title'].casefold() for word in include))
+                    and not any(word in video['title'].casefold() for word in exclude)),
+                    key=lambda row: (parse_time(row['published_at']), row['video_id']), reverse=True)
+                # Keep model batches bounded and stop once enough matches are known.
+                for group in batches(eligible, 20):
+                    accepted = self.admit(topic, {video['video_id']: video for video in group})
+                    for video in group:
+                        if video['video_id'] in accepted:
+                            matches[video['video_id']] = video
+                            if len(matches) == limit:
+                                break
+                    if len(matches) == limit:
+                        break
+            desired.update(matches)
+        return desired
 
     def write(self, topic, kind, payload, resource, method, **parameters):
         """Persist intent, dispatch once, and retain uncertain outcomes for reconciliation.
@@ -275,6 +338,7 @@ class Sync:
                 video = videos.get(video_id, {})
                 self.state.put_item(topic['id'], dict(item_id=item['id'], video_id=video_id,
                     title=item['snippet'].get('title', video.get('title', saved.get(video_id, {}).get('title', ''))),
+                    channel_id=(item['snippet'].get('videoOwnerChannelId') or saved.get(video_id,{}).get('channel_id') or video.get('channel_id')),
                     published_at=(item.get('contentDetails', {}).get('videoPublishedAt')
                                   or saved.get(video_id, {}).get('published_at') or video.get('published_at'))))
             self.state._update(topic['id'], dict(playlist_id=playlist_id,
@@ -319,21 +383,20 @@ class Sync:
         if self.state.pending(topic['id']) or (topic['playlist_id'] and
                 (not topic['reconciled_at'] or parse_time(topic['reconciled_at']) <= now - timedelta(days=7))):
             topic = self.reconcile(topic)
-        desired = self.recent_videos(topic, now)
-        minimum = self.state.meta('minimum_video_seconds', 0)
-        retained = {}
-        if minimum:
-            existing = {item['video_id'] for item in self.state.items(topic['id'])}
-            excluded = {key: video for key, video in desired.items()
-                        if video['duration_seconds'] is None or video['duration_seconds'] < minimum}
-            retained = {key: video for key, video in excluded.items() if key in existing}
-            desired = {key: video for key, video in desired.items() if key not in excluded}
-            self.report(f'Minimum length {minimum}s: skipping {len(excluded) - len(retained)} new videos '
-                        f'(too short or duration unavailable); keeping {len(retained)} existing entries.')
-        if self.classifier:
-            desired = self.classifier.match(topic, desired)
-        desired = {**desired, **retained}
+        if topic.get('max_videos') is None:
+            desired = self.admit(topic, self.recent_videos(topic, now))
+        else:
+            desired = self.limited_videos(topic, now)
         current = self.state.items(topic['id'])
+        if not preview:
+            # Upgrade legacy item attribution using metadata already fetched;
+            # future forecasts can use real channel ages/slots without extra calls.
+            with self.state.db:
+                for item in current:
+                    video = desired.get(item['video_id'])
+                    if video and not item.get('channel_id'):
+                        self.state.db.execute('UPDATE items SET channel_id=? WHERE topic_id=? AND item_id=?',
+                                              (video['channel_id'],topic['id'],item['item_id']))
         seen, remove = set(), []
         for item in current:
             if item['video_id'] not in desired or item['video_id'] in seen:
@@ -382,12 +445,18 @@ class Sync:
         # Channel fairness chooses additions; topic fairness limits how many steps
         # are drained per turn. Alternating cleanup keeps either backlog from
         # blocking the other, and removals never consume a channel insertion slot.
+        if topic.get('max_videos') is not None:
+            for item in remove:
+                progress(f"Freeing a slot in {topic['name']}…")
+                self.remove_item(topic, item)
+                yield record_step()
+            remove = []
         turns = addition_turns(topic, add)
         for turn, item in zip_longest(turns, remove):
             if turn is not None:
                 video, rotation = turn
                 # A long-running round must not insert a video that aged out while waiting.
-                if parse_time(video['published_at']) >= self.now() - timedelta(days=topic['max_age_days']):
+                if parse_time(video['published_at']) >= self.now() - timedelta(days=channel_age_days(topic, video['channel_id'])):
                     progress(f"Adding a video to {topic['name']}…")
                     # Insert older backlog behind newer saved entries without moving them.
                     position = sum(1 for saved in self.state.items(topic['id'])
