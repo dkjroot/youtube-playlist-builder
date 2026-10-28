@@ -1,0 +1,7 @@
+{
+  "base_url": "http://127.0.0.1:5001/v1",
+  "model": "local-model",
+  "max_calls": 20,
+  "max_daily_calls": 100,
+  "max_tokens": 4096
+}

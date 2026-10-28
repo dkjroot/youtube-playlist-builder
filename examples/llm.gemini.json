@@ -1,0 +1,9 @@
+{
+  "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+  "model": "YOUR_MODEL_ID",
+  "allow_remote": true,
+  "api_key_env": "GEMINI_API_KEY",
+  "max_calls": 20,
+  "max_daily_calls": 100,
+  "max_tokens": 4096
+}
