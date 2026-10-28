@@ -51,7 +51,7 @@ class FairBatchTests(unittest.TestCase):
             self.assertEqual(topic['last_success'], self.now.isoformat())
             ids = [item['snippet']['resourceId']['videoId'] for item in self.server.items[topic['playlist_id']]]
             self.assertEqual(ids, [f'new{i}' for i in range(8)])
-        self.assertEqual(len([1 for r, m, p in self.server.calls if r == 'videos']), 2)  # Reconciliation of old ID, then new IDs.
+        self.assertEqual(len([1 for r, m, p in self.server.calls if r == 'videos']), 1)  # Saved dates avoid a reconciliation-only lookup.
 
     def test_completion_saved_at_exact_write_boundary(self):
         self.topic()

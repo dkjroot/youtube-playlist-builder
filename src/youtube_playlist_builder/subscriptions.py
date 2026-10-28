@@ -1,8 +1,8 @@
 """Explicit subscription export for discovery and interactive channel selection.
 
 The CLI uses this module to write a complete, sorted local export. Sync separately
-refreshes the current subscription set once per update run so changes in the
-account are respected even if the human-facing export has not been refreshed.
+uses a separate account-scoped membership cache with a bounded lifetime and
+explicit refresh. The exported file does not dictate that cache’s freshness.
 """
 
 from .terminal import waiting

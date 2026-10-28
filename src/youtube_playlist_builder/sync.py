@@ -12,6 +12,7 @@ from datetime import timedelta
 from itertools import zip_longest
 
 from .videos import duration_seconds
+from .channel_order import addition_turns
 from .terminal import progress
 from .api import ApiFailure, ConnectionFailure, QuotaStop
 from .schedule import staggered_due, initialise_staggering, due_topics, parse_time, playlist_title, utcnow
@@ -26,17 +27,22 @@ def batches(values, size=50):
 class Sync:
     """Reconcile desired topic contents against durable local playlist-item records.
 
-    Discovery is shared within a run, not across runs, to keep subscriptions and
-    availability fresh. Additions and cleanup share bounded turns after complete discovery and valid
-    model decisions. Each write is recorded before yielding to another topic.
+    Upload discovery and availability refresh each run. Subscription membership
+    and stable uploads-playlist addresses have bounded persistent caches. Additions
+    and cleanup share turns after complete discovery and valid model decisions.
+    Each write is recorded before yielding to another topic.
     """
-    def __init__(self, api, state, *, now=utcnow, report=print, classifier=None):
+    def __init__(self, api, state, *, now=utcnow, report=print, classifier=None, refresh_subscriptions=False):
         """Start a run with independent in-memory feed/metadata caches and optional classifier."""
         self.api, self.state, self.now, self.report = api, state, now, report
         self.classifier = classifier
         self.subscribed = None
+        self.owner = None
+        self.refresh_subscriptions = refresh_subscriptions
         self.uploads = {}
-        # Run-scoped caches avoid stale subscriptions/video status on tomorrow's run.
+        self.cached_upload_ids = set()
+        # Feed-page and video-detail caches expire with this run; cached addresses
+        # never stand in for a fresh feed read, so newly published news stays visible.
         self.upload_pages = {}
         self.video_details = {}
 
@@ -51,17 +57,38 @@ class Sync:
             raise ValueError('This database belongs to a different YouTube account. Use a separate --state file for this account.')
         if not previous:
             self.state.set_meta('owner_channel_id', owner)
+        self.owner = owner
         return owner
 
     def subscriptions(self):
-        """Fetch one complete current subscription snapshot per run, shared by all topics."""
-        if self.subscribed is None:
-            entries = self.api.all_items('subscriptions', part='snippet', mine=True, maxResults=50)
-            channels = [dict(channel_id=item['snippet']['resourceId']['channelId'],
-                             title=item['snippet']['title'], description=item['snippet'].get('description', ''))
-                        for item in entries]
-            self.subscribed = {channel['channel_id'] for channel in channels}
-            self.state.set_meta('subscriptions', channels)
+        """Reuse a bounded account-scoped channel list; upload feeds always refresh per run.
+
+        YouTube has no subscription delta endpoint. Only complete successful lists
+        replace the snapshot; a failed refresh never falls back to expired data.
+        identify() must verify the account before a persistent snapshot is trusted.
+        """
+        if self.subscribed is not None:
+            return self.subscribed
+        hours = self.state.meta('subscription_cache_hours', 24)
+        cached = self.state.meta('subscription_cache')
+        if self.owner and hours and not self.refresh_subscriptions and isinstance(cached, dict):
+            try:
+                age = self.now() - parse_time(cached['fetched_at'])
+                if (cached['owner'] == self.owner and timedelta(0) <= age < timedelta(hours=hours)
+                        and isinstance(cached['channels'], list)):
+                    channel_ids = {channel['channel_id'] for channel in cached['channels']}
+                    if all(isinstance(channel, str) for channel in channel_ids):
+                        self.subscribed = channel_ids
+                        progress(f'Using cached subscription list ({len(channel_ids)} channels); checking uploads live…')
+                        return self.subscribed
+            except (KeyError, TypeError, ValueError, AttributeError):
+                pass  # An old/malformed cache is disposable; fetch a complete replacement.
+        entries = self.api.all_items('subscriptions', part='snippet', mine=True, maxResults=50)
+        channels = [dict(channel_id=item['snippet']['resourceId']['channelId'],
+                         title=item['snippet']['title'], description=item['snippet'].get('description', ''))
+                    for item in entries]
+        self.subscribed = {channel['channel_id'] for channel in channels}
+        self.state.set_meta('subscription_cache', dict(owner=self.owner, fetched_at=self.now().isoformat(), channels=channels))
         return self.subscribed
 
     def details(self, video_ids):
@@ -86,6 +113,43 @@ class Sync:
                                           duration_seconds=duration_seconds(item.get('contentDetails', {}).get('duration')))
         return {key: self.video_details[key] for key in requested if self.video_details.get(key)}
 
+    def resolve_uploads(self, channel_ids, *, refresh=False):
+        """Resolve stable upload-playlist addresses without caching their video contents.
+
+        The API supplies these identifiers; don't derive them from channel IDs.
+        A seven-day cache avoids repeated address lookups while every command
+        still reads the actual feeds. Only a complete lookup updates the cache.
+        """
+        records = self.state.meta('upload_playlist_ids', {})
+        if not isinstance(records, dict):
+            records = {}
+        if not refresh:
+            for channel_id in channel_ids:
+                if channel_id in self.uploads:
+                    continue
+                record = records.get(channel_id)
+                if not isinstance(record, dict):
+                    continue
+                try:
+                    age = self.now() - parse_time(record['fetched_at'])
+                    if (timedelta(0) <= age < timedelta(days=7)
+                            and isinstance(record['playlist_id'], str) and record['playlist_id']):
+                        self.uploads[channel_id] = record['playlist_id']
+                        self.cached_upload_ids.add(channel_id)
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    continue
+        missing = sorted(set(channel_ids) if refresh else set(channel_ids) - self.uploads.keys())
+        for group in batches(missing):
+            entries = self.api.call('channels', part='contentDetails', id=','.join(group)).get('items', [])
+            resolved = {item['id']: item['contentDetails']['relatedPlaylists']['uploads'] for item in entries}
+            if set(group) - resolved.keys():
+                raise ValueError('Some selected channels could not be read. No content-based removals were made.')
+            for channel_id in group:
+                self.uploads[channel_id] = resolved[channel_id]
+                self.cached_upload_ids.discard(channel_id)
+                records[channel_id] = dict(playlist_id=resolved[channel_id], fetched_at=self.now().isoformat())
+            self.state.set_meta('upload_playlist_ids', records)
+
     def upload_ids(self, channel_id, cutoff):
         """Reuse upload pages, extending the snapshot only for wider topic age windows."""
         pages = self.upload_pages.setdefault(channel_id, [])
@@ -96,7 +160,20 @@ class Sync:
                 if pages:
                     parameters['pageToken'] = pages[-1]['nextPageToken']
                 # Only complete responses enter the cache; failures never imply an empty feed.
-                pages.append(self.api.call('playlistItems', **parameters))
+                try:
+                    page = self.api.call('playlistItems', **parameters)
+                except ApiFailure as error:
+                    if error.status != 404 or channel_id not in self.cached_upload_ids:
+                        raise
+                    previous = self.uploads[channel_id]
+                    self.resolve_uploads([channel_id], refresh=True)
+                    if self.uploads[channel_id] == previous:
+                        raise  # Same address: another feed request would just waste quota.
+                    pages.clear()
+                    # IDs yielded earlier belong to the old snapshot; force the
+                    # caller to rebuild its set from the replacement, not merge both.
+                    raise ValueError('A channel upload-playlist address changed. Retry this topic to use its refreshed address.') from None
+                pages.append(page)
             page = pages[index]
             entries = page.get('items', [])
             dates = [item['contentDetails'].get('videoPublishedAt') for item in entries]
@@ -118,13 +195,7 @@ class Sync:
         """
         cutoff = now - timedelta(days=topic['max_age_days'])
         selected = sorted(set(topic['channels']) & self.subscriptions())
-        missing = sorted(set(selected) - self.uploads.keys())
-        for group in batches(missing):
-            entries = self.api.call('channels', part='contentDetails', id=','.join(group)).get('items', [])
-            for item in entries:
-                self.uploads[item['id']] = item['contentDetails']['relatedPlaylists']['uploads']
-            if set(group) - self.uploads.keys():
-                raise ValueError('Some selected channels could not be read. No content-based removals were made.')
+        self.resolve_uploads(selected)
         ids = set()
         for index, channel_id in enumerate(selected, 1):
             progress(f"{topic['name']}: reading channel {index}/{len(selected)}…")
@@ -188,7 +259,14 @@ class Sync:
         if remote['snippet']['channelId'] != self.state.meta('owner_channel_id'):
             raise ValueError('The managed playlist is not owned by the signed-in YouTube channel.')
         entries = self.api.all_items('playlistItems', part='snippet,contentDetails', playlistId=playlist_id, maxResults=50)
-        videos = self.details([item['snippet']['resourceId']['videoId'] for item in entries])
+        # Playlist items already carry the original video publication date. For
+        # older/missing API fields, keep a known date or resolve only unknown IDs;
+        # don't read every video's description/status merely to rebuild item IDs.
+        saved = {item['video_id']: item for item in self.state.items(topic['id'])}
+        unresolved = [item['snippet']['resourceId']['videoId'] for item in entries
+                      if not item.get('contentDetails', {}).get('videoPublishedAt')
+                      and not saved.get(item['snippet']['resourceId']['videoId'], {}).get('published_at')]
+        videos = self.details(unresolved)
         # Only replace local contents after every page and metadata request succeeds.
         with self.state.db:
             self.state.db.execute('DELETE FROM items WHERE topic_id=?', (topic['id'],))
@@ -196,10 +274,18 @@ class Sync:
                 video_id = item['snippet']['resourceId']['videoId']
                 video = videos.get(video_id, {})
                 self.state.put_item(topic['id'], dict(item_id=item['id'], video_id=video_id,
-                                                     title=video.get('title', ''), published_at=video.get('published_at')))
+                    title=item['snippet'].get('title', video.get('title', saved.get(video_id, {}).get('title', ''))),
+                    published_at=(item.get('contentDetails', {}).get('videoPublishedAt')
+                                  or saved.get(video_id, {}).get('published_at') or video.get('published_at'))))
             self.state._update(topic['id'], dict(playlist_id=playlist_id,
                 remote_title=remote['snippet']['title'] if remote['status']['privacyStatus'] == 'private' else None,
                 reconciled_at=self.now().isoformat()))
+            if (pending and pending['kind'] == 'insert'
+                    and 'channel_rotation' in pending['payload']
+                    and any(item['snippet']['resourceId']['videoId'] == pending['payload']['video_id'] for item in entries)):
+                # A lost reply must grant the completed channel its turn exactly
+                # once. If the insertion never landed, leave its cursor unchanged.
+                self.state._update(topic['id'], {'channel_rotation': pending['payload']['channel_rotation']})
             self.state.clear_pending(topic['id'])
         return self.state.by_id(topic['id'])
 
@@ -293,22 +379,26 @@ class Sync:
                 self.state._update(topic['id'], dict(remote_title=title))
                 self.state.clear_pending(topic['id'])
             yield record_step()
-        # Alternate fresh additions and cleanup. A long removal backlog must not
-        # consume every turn before this playlist gets something new to watch.
-        newest = sorted(add, key=lambda item: item['published_at'], reverse=True)
-        for video, item in zip_longest(newest, remove):
-            if video is not None:
+        # Channel fairness chooses additions; topic fairness limits how many steps
+        # are drained per turn. Alternating cleanup keeps either backlog from
+        # blocking the other, and removals never consume a channel insertion slot.
+        turns = addition_turns(topic, add)
+        for turn, item in zip_longest(turns, remove):
+            if turn is not None:
+                video, rotation = turn
                 # A long-running round must not insert a video that aged out while waiting.
                 if parse_time(video['published_at']) >= self.now() - timedelta(days=topic['max_age_days']):
                     progress(f"Adding a video to {topic['name']}…")
                     # Insert older backlog behind newer saved entries without moving them.
                     position = sum(1 for saved in self.state.items(topic['id'])
                                    if saved['published_at'] and parse_time(saved['published_at']) > parse_time(video['published_at']))
-                    result = self.write(topic, 'insert', video, 'playlistItems', 'insert', part='snippet',
+                    payload = dict(video, channel_rotation=rotation)
+                    result = self.write(topic, 'insert', payload, 'playlistItems', 'insert', part='snippet',
                         body={'snippet': {'playlistId': topic['playlist_id'], 'position': position,
                             'resourceId': {'kind': 'youtube#video', 'videoId': video['video_id']}}})
                     with self.state.db:
                         self.state.put_item(topic['id'], dict(item_id=result['id'], **video))
+                        self.state._update(topic['id'], {'channel_rotation': rotation})
                         self.state.clear_pending(topic['id'])
                     yield record_step()
                 else:

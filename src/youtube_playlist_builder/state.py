@@ -67,11 +67,23 @@ class State:
                 day TEXT PRIMARY KEY, used INTEGER NOT NULL DEFAULT 0,
                 exhausted INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS api_usage (
+                day TEXT NOT NULL, resource TEXT NOT NULL, method TEXT NOT NULL,
+                calls INTEGER NOT NULL DEFAULT 0, units INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(day, resource, method)
+            );
         """)
 
         if 'description' not in {row[1] for row in self.db.execute('PRAGMA table_info(topics)')}:
             with self.db:
                 self.db.execute("ALTER TABLE topics ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+        # Existing installations give every channel medium priority. Rotation is
+        # stored on the topic so its successful turn position survives restarts.
+        columns = {row[1] for row in self.db.execute('PRAGMA table_info(topics)')}
+        with self.db:
+            for column in ('channel_priorities', 'channel_rotation'):
+                if column not in columns:
+                    self.db.execute(f"ALTER TABLE topics ADD COLUMN {column} TEXT NOT NULL DEFAULT '{{}}'")
 
     def close(self):
         """Release the connection after the CLI operation, even if an API request failed."""
@@ -107,7 +119,7 @@ class State:
         if row is None:
             raise ValueError('Topic not found.')
         topic = dict(row)
-        for key in ('channels', 'include_words', 'exclude_words'):
+        for key in ('channels', 'include_words', 'exclude_words', 'channel_priorities', 'channel_rotation'):
             topic[key] = json.loads(topic[key])
         return topic
 
@@ -137,10 +149,10 @@ class State:
         """Apply allowlisted fields without committing; callers can group related state changes."""
         allowed = {'description', 'name', 'playlist_name', 'frequency', 'max_age_days', 'enabled', 'channels',
                    'include_words', 'exclude_words', 'playlist_id', 'remote_title', 'last_success',
-                   'next_due', 'last_attempt', 'last_error', 'reconciled_at'}
+                   'next_due', 'last_attempt', 'last_error', 'reconciled_at', 'channel_priorities', 'channel_rotation'}
         if fields.keys() - allowed:
             raise ValueError('Unknown topic field.')
-        values = {key: json.dumps(value) if key in ('channels', 'include_words', 'exclude_words')
+        values = {key: json.dumps(value) if key in ('channels', 'include_words', 'exclude_words', 'channel_priorities', 'channel_rotation')
                   else value for key, value in fields.items()}
         if values:
             self.db.execute(f"UPDATE topics SET {', '.join(key + '=?' for key in values)} WHERE id=?",
@@ -186,10 +198,23 @@ class State:
         row = self.db.execute('SELECT used,exhausted FROM quota WHERE day=?', (day,)).fetchone()
         return dict(row) if row else {'used': 0, 'exhausted': 0}
 
-    def charge(self, day, cost):
-        """Commit the estimated request cost before dispatch so crashes cannot erase usage."""
+    def charge(self, day, cost, *, resource=None, method=None):
+        """Charge quota and optional endpoint statistics atomically before dispatch.
+
+        Failed requests count too. Statistics start when this instrumentation is
+        installed; older aggregate quota rows cannot be broken down retrospectively.
+        """
         with self.db:
             self.db.execute('INSERT INTO quota(day,used) VALUES (?,?) ON CONFLICT(day) DO UPDATE SET used=used+excluded.used', (day, cost))
+            if resource and method:
+                self.db.execute('''INSERT INTO api_usage(day,resource,method,calls,units) VALUES (?,?,?,1,?)
+                    ON CONFLICT(day,resource,method) DO UPDATE SET calls=calls+1,units=units+excluded.units''',
+                    (day, resource, method, cost))
+
+    def api_usage(self, day):
+        """Return the locally measured endpoint breakdown for a Pacific quota day."""
+        return [dict(row) for row in self.db.execute(
+            'SELECT resource,method,calls,units FROM api_usage WHERE day=? ORDER BY units DESC,resource,method', (day,))]
 
     def exhaust(self, day):
         """Remember a server quota refusal until the next Pacific day, avoiding repeated failures."""

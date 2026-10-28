@@ -252,6 +252,53 @@ playlist. `--channel` replaces the entire channel selection; `--add-channel` and
 of those phrases; repeating `--exclude` rejects any of them. `--default-name`
 restores the normal playlist name.
 
+### Channel priorities and fair turns
+
+You can give each channel a **high**, **medium** or **low** priority within a
+topic. All channels start at medium, including topics you've already set up.
+In the menu, choose **3. Edit a topic → Channel priorities**, select a channel,
+and choose its priority. The menu uses channel names from your subscription
+export when available.
+
+The equivalent commands are:
+
+```sh
+yt-playlists channels QUERY
+yt-playlists topics set news --channel-priority CHANNEL_ID=high
+yt-playlists topics set news --channel-priority ANOTHER_CHANNEL_ID=low
+yt-playlists topics show news
+```
+
+Replace the example IDs with actual channel IDs from `channels` or `topics show`.
+You can repeat `--channel-priority` in one command and use it when adding a topic.
+Set a channel back to `medium` to restore the default. It must already belong to
+the topic, or be added with `--add-channel` in the same edit. Removing a channel
+also removes its priority override.
+
+There are now two rotations: auto mode gives each due playlist a bounded turn,
+and each playlist takes weighted turns between its channels for new additions.
+High channels get three slots per cycle, medium two, and low one. A cycle with
+one of each goes high, medium, low, high, medium, high. Equal-priority channels
+each get one slot before repeating. Empty slots are skipped, so a quiet channel
+doesn't waste quota and a busy one can use the spare capacity. These are relative
+opportunities when eligible videos are available, not guaranteed daily counts.
+
+The next slot is saved with each successful insertion. If quota runs out after
+one channel's video, the following command starts at the next saved channel slot
+rather than beginning at the same channel again. Priorities are separate for
+each topic, and each channel's newest eligible video is selected first. The
+playlist itself stays in date order; priority changes selection order rather
+than moving videos already present.
+
+Priority changes make a topic due and start a new channel cycle. They don't
+remove existing videos or change which videos pass the topic filters. Previews
+don't consume slots, failed insertions don't consume them, and reconciliation
+restores the slot if an insertion succeeded but its reply was lost. The same
+ordering works for manual updates, normal auto, and update-all mode, in text and
+LLM modes. It needs no extra YouTube or model requests.
+
+### Update schedules
+
 The frequency choices are `daily`, `every-2-days`, `every-4-days`, `weekly`,
 `biweekly` (every two weeks), and `monthly`. Set your scheduling timezone once:
 
@@ -269,7 +316,8 @@ left and the number of unfinished playlists. Creation and renaming count as
 changes too, so they don't bypass the allowance. The estimate is recalculated
 on each turn; YouTube reads still consume quota, and the hard budget always wins.
 
-New videos are added newest first, alternating with removals when cleanup is
+New videos take weighted turns between channels, newest first within each
+channel, alternating with removals when cleanup is
 needed. Each playlist gets a turn before an unfinished one gets another batch.
 Completed changes stay saved if quota runs out, and the incomplete topic stays
 due. The next run starts after the last attempted topic. If everything fits, all
@@ -339,6 +387,41 @@ but its public video API doesn't expose a Shorts flag. The API's
 can also differ slightly from playback length, so the threshold applies to the
 reported duration.
 
+### Subscription channel cache and fresh uploads
+
+Updates cache the list of **which channels you follow** for 24 hours in the local
+database. This avoids reading every subscription page again when you run several
+updates. It does **not** cache yesterday's videos: each command still checks
+channel uploads and video details for the latest news, politics and other uploads.
+
+YouTube doesn't provide a changed-since subscription feed, so refreshing the list
+means reading all its pages again. New subscriptions and unsubscribes can take
+up to the cache lifetime to be noticed. After changing who you follow, force a
+fresh list on an update:
+
+```sh
+yt-playlists auto --refresh-subscriptions
+yt-playlists auto --all --refresh-subscriptions
+yt-playlists update news --refresh-subscriptions
+```
+
+Or choose **18. Subscription channel cache** in the menu and refresh on the next
+update. The same option lets you adjust the lifetime. From the command line:
+
+```sh
+yt-playlists settings --subscription-cache-hours 24
+yt-playlists settings --subscription-cache-hours 0
+yt-playlists settings --refresh-subscriptions
+```
+
+Zero disables reuse between commands. The maximum lifetime is 720 hours; the
+normal 24-hour default is a compromise between channel-list freshness and reads.
+The cache belongs to the verified YouTube account and is replaced only after a
+complete successful refresh. If refreshing fails, the update stops rather than
+quietly using expired membership data. The standalone `subscriptions --output`
+command always fetches a fresh export for topic suggestions; that export is
+separate from this managed-update cache.
+
 ### API budgets and local records
 
 Playlist and playlist-item IDs are saved in `.local/playlists.sqlite3`. Keep this
@@ -370,6 +453,33 @@ window; renew authentication with `auth --write-access` if needed.
 A preview doesn't write to YouTube or advance the update queue. It still makes
 YouTube reads and, in LLM mode, may make paid model calls. Those results are cached
 for the real update.
+
+### Where the remaining quota goes
+
+`yt-playlists status` includes a breakdown of calls and estimated units by API
+operation. This starts counting when the feature is installed; older usage stays
+in the daily total without a retrospective breakdown. Failed dispatched attempts
+are counted too. This is our local accounting, not a reading of Google's remaining
+allowance, and the separate subscription export/setup proof aren't included.
+
+The script also caches each channel's uploads-playlist **address** for seven days.
+It still reads the feed at that address on every update command, so this doesn't
+delay new videos. An invalid cached address triggers a fresh channel lookup;
+if it has changed, that topic stops safely and can be retried with the new address.
+Reconciliation uses video publication dates already present in playlist items or
+known local records, requesting extra video metadata only when a date is unknown.
+
+The expensive part is the lifetime of a video in a rolling playlist: adding it
+costs 50 units, and eventually removing it costs another 50. A video that appears
+in two topic playlists incurs those changes twice. With a 10,000-unit allowance,
+that means fewer than about 100 new playlist entries per day on a sustained
+basis after allowing for reads and playlist edits. Initial filling can add more
+because those entries haven't reached their removal dates yet.
+
+Longer retention postpones removals and avoids repeated initial fills, but it
+doesn't remove the eventual deletion cost. To make a big further reduction we'd
+have to include fewer videos, allow expired items to remain, or rebuild playlists
+with new links. None of those changes happens automatically.
 
 ### Optional LLM setup
 

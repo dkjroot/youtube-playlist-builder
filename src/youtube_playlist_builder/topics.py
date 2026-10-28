@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 
 from .schedule import staggered_due, FREQUENCIES, next_due, parse_time, playlist_title
+from .channel_order import PRIORITIES
 
 # These are suggestions, not a claim to understand every channel. The extra
 # names catch channels whose titles don't describe their subject.
@@ -118,6 +119,13 @@ def validate(name, fields):
         raise ValueError('Use a playlist name of 1–150 characters.')
     if any(not re.fullmatch(r'UC[A-Za-z0-9_-]{22}', channel) for channel in fields.get('channels', [])):
         raise ValueError('Use YouTube channel IDs (UC followed by 22 characters). Find them with the channels command.')
+    priorities = fields.get('channel_priorities', {})
+    if not isinstance(priorities, dict) or any(
+            not isinstance(cid, str) or not re.fullmatch(r'UC[A-Za-z0-9_-]{22}', cid) or level not in PRIORITIES
+            for cid, level in priorities.items()):
+        raise ValueError('Channel priorities must map YouTube channel IDs to high, medium or low.')
+    if 'channels' in fields and priorities.keys() - set(fields['channels']):
+        raise ValueError('Set priorities only for channels selected in this topic; add the channel first or in the same edit.')
     for key in ('include_words', 'exclude_words'):
         if any(not word.strip() for word in fields.get(key, [])):
             raise ValueError('Title filters cannot be empty.')
@@ -125,12 +133,19 @@ def validate(name, fields):
 
 def edit_topic(state, topic, fields):
     """Save validated changes, refuse unresolved writes and recalculate or invalidate due times."""
+    if 'channels' in fields:
+        # Dropped channels must not retain a hidden priority if they are re-added.
+        fields['channel_priorities'] = {cid: level for cid, level in
+            fields.get('channel_priorities', topic['channel_priorities']).items() if cid in fields['channels']}
+    if 'channel_priorities' in fields:
+        validate(topic['name'], dict(topic, **fields))
+        fields['channel_rotation'] = {}
     validate(topic['name'], fields)
     if state.pending(topic['id']):
         raise ValueError('Reconcile the interrupted update before editing this topic.')
     if 'frequency' in fields and topic['last_success'] and topic['next_due']:
         fields['next_due'] = staggered_due(state, dict(topic, **fields), parse_time(topic['last_success'])).isoformat()
-    if any(key in fields for key in ('description', 'channels', 'include_words', 'exclude_words', 'max_age_days', 'playlist_name')):
+    if any(key in fields for key in ('description', 'channels', 'channel_priorities', 'include_words', 'exclude_words', 'max_age_days', 'playlist_name')):
         fields['next_due'] = None
     state.update(topic['id'], **fields)
 

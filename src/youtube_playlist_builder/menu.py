@@ -6,6 +6,7 @@ Escape cancels an unfinished form; it cannot undo a command already submitted.
 """
 
 from .terminal import ask, MenuCancelled
+from .channel_order import PRIORITIES
 from .schedule import FREQUENCIES
 from .state import State
 from .api import QuotaStop
@@ -90,6 +91,7 @@ def run_menu(args, runner):
                   ' 15. Text or LLM mode (topic discovery and video matching)\n'
                   ' 16. Update all enabled topics (ignore frequency)\n'
                   ' 17. Minimum video length\n'
+                  ' 18. Subscription channel cache (uploads always refresh)\n'
                   '  0. Exit\n'
                   'Press Escape at any prompt to return here.')
             action = ask('Choose: ').strip()
@@ -139,9 +141,27 @@ def run_menu(args, runner):
                 if name is None:
                     continue
                 run('topics', 'show', name)
-                field = choose('Change', ['Frequency', 'Maximum video age', 'Playlist name', 'Channels', 'Title filters', 'Topic description (LLM)', 'Add channels'])
+                field = choose('Change', ['Frequency', 'Maximum video age', 'Playlist name', 'Channels', 'Title filters', 'Topic description (LLM)', 'Add channels', 'Channel priorities'])
                 words = ['topics', 'set', name]
-                if field == 5:
+                if field == 7:
+                    state = State(args.state)
+                    try:
+                        topic = state.topic(name)
+                    finally:
+                        state.close()
+                    titles = {channel['channel_id']: channel['title'] for channel in load_subscriptions(export)} if export.exists() else {}
+                    channels = sorted(topic['channels'], key=lambda cid: titles.get(cid, cid).casefold())
+                    if not channels:
+                        raise ValueError('Add channels to this topic before setting priorities.')
+                    index = choose('Channel', [f"{titles.get(cid, cid)} [{topic['channel_priorities'].get(cid, 'medium')}]"
+                                               for cid in channels])
+                    if index is None:
+                        continue
+                    priority = choose('Priority (weighted turns: high 3, medium 2, low 1)', list(PRIORITIES))
+                    if priority is None:
+                        continue
+                    words += ['--channel-priority', f'{channels[index]}={PRIORITIES[priority]}']
+                elif field == 5:
                     words += ['--description', ask('What belongs in this topic? ').strip()]
                 elif field == 0:
                     frequency = choose('Frequency', list(FREQUENCIES))
@@ -192,6 +212,15 @@ def run_menu(args, runner):
                 run('suggest-topics', '--subscriptions', str(export))
             elif action == '7':
                 run('channels', ask('Search: ').strip(), '--subscriptions', str(export))
+            elif action == '18':
+                run('settings')
+                choice = choose('Subscription channel cache', ['Refresh on the next update', 'Set cache lifetime'])
+                if choice == 0:
+                    run('settings', '--refresh-subscriptions')
+                elif choice == 1:
+                    hours = ask('Cache hours (24 default; 0 always refreshes; maximum 720): ').strip()
+                    if hours:
+                        run('settings', '--subscription-cache-hours', hours)
             elif action == '17':
                 run('settings')
                 length = ask('Minimum seconds for new videos (0 turns off; 181 excludes up to 3 minutes; blank keeps it): ').strip()

@@ -75,7 +75,7 @@ class YouTube:
         cost = 1 if method == 'list' else 50
         self.check(cost)
         day = self.day()
-        self.state.charge(day, cost)
+        self.state.charge(day, cost, resource=resource, method=method)
         self.spent += cost
         try:
             with waiting(f'YouTube: {resource}.{method}…'):

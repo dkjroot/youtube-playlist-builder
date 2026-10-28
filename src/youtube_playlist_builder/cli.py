@@ -69,6 +69,8 @@ def parser() -> argparse.ArgumentParser:
         change.add_argument('--max-age', type=positive, help='Maximum video age in days.')
         change.add_argument('--playlist-name', help='Override the default sub_<topic> name.')
         change.add_argument('--channel', action='append', help='Channel ID; repeat to select several. Replaces the selection.')
+        change.add_argument('--channel-priority', action='append', type=channel_priority, default=[], metavar='CHANNEL_ID=LEVEL',
+                            help='Set high, medium or low for a selected channel (default medium); repeat as needed.')
         change.add_argument('--include', action='append', help='Require any of these title substrings; repeat as needed.')
         change.add_argument('--exclude', action='append', help='Exclude titles matching any of these substrings.')
         if action == 'add':
@@ -93,15 +95,29 @@ def parser() -> argparse.ArgumentParser:
         operation.add_argument('--budget', type=positive, help='Maximum API units for this run.')
         operation.add_argument('--daily-budget', type=positive, help='Override the saved daily unit budget for this run.')
         if command != 'reconcile':
+            operation.add_argument('--refresh-subscriptions', action='store_true',
+                                   help='Refresh subscribed channels now; uploads are always checked live.')
             operation.add_argument('--preview', action='store_true', help='Read and show proposed changes without writing to YouTube.')
     commands.add_parser('status', help='Show the queue, schedules, and local daily quota usage.')
     settings = commands.add_parser('settings', help='View or set the local daily API budget (default 9500 units).')
+    settings.add_argument('--subscription-cache-hours', type=nonnegative, metavar='HOURS',
+                          help='Cache subscribed channel list for up to 720 hours; 0 always refreshes (default 24).')
+    settings.add_argument('--refresh-subscriptions', action='store_true',
+                          help='Discard the channel-list cache so the next update fetches it again.')
     settings.add_argument('--minimum-video-length', type=nonnegative, metavar='SECONDS',
                           help='Minimum duration for new additions; 0 disables the filter.')
     settings.add_argument('--mode', choices=('text', 'llm'), help='Select topic discovery and video matching together.')
     settings.add_argument('--daily-budget', type=positive)
     settings.add_argument('--timezone', help='Calendar scheduling timezone, such as Europe/London (default UTC).')
     return result
+
+
+def channel_priority(value):
+    """Parse a repeatable channel-priority edit before any network work or state changes."""
+    channel_id, separator, level = value.partition('=')
+    if not separator or level not in ('high', 'medium', 'low') or not channel_id:
+        raise argparse.ArgumentTypeError('Use CHANNEL_ID=high, CHANNEL_ID=medium or CHANNEL_ID=low.')
+    return channel_id, level
 
 
 def nonnegative(value):
@@ -166,6 +182,14 @@ def local_command(args, state):
                     print('No matches found. Add a topic and select its channels manually.')
         return 0
     if args.command == 'settings':
+        if args.subscription_cache_hours is not None:
+            if args.subscription_cache_hours > 720:
+                raise ValueError('Subscription cache lifetime must be between 0 and 720 hours.')
+            state.set_meta('subscription_cache_hours', args.subscription_cache_hours)
+        if args.refresh_subscriptions:
+            state.set_meta('subscription_cache', None)
+            print('Subscription channel cache cleared; the next update will refresh it.')
+        print(f"Subscription channel cache: {state.meta('subscription_cache_hours', 24)} hours; upload feeds refresh every run.")
         if args.minimum_video_length is not None:
             state.set_meta('minimum_video_seconds', args.minimum_video_length)
         print(f"Minimum video length: {state.meta('minimum_video_seconds', 0)} seconds (0 means off).")
@@ -203,6 +227,11 @@ def local_command(args, state):
                 quota = state.quota(day)
                 print(f"\nTracked quota for {day} (Pacific): {quota['used']}/{state.meta('daily_budget', 9500)} units"
                       + ('; YouTube quota exhausted.' if quota['exhausted'] else '.'))
+                usage = state.api_usage(day)
+                if usage:
+                    print('Request breakdown (since this feature was installed; includes failed attempts):')
+                    for row in usage:
+                        print(f"  {row['resource']}.{row['method']}: {row['calls']} calls, {row['units']} estimated units")
                 queue = due_topics(topics, state.meta('cursor', 0), utcnow())
                 llm_day = datetime.now(timezone.utc).date().isoformat()
                 print(f"LLM calls today (UTC): {state.meta('llm_calls:' + llm_day, 0)}.")
@@ -212,6 +241,7 @@ def local_command(args, state):
         if args.action == 'add':
             fields = dict(description=args.description or '', frequency=args.frequency or 'daily', max_age_days=args.max_age or 7,
                           enabled=not args.disabled, channels=args.channel or [],
+                          channel_priorities=dict(args.channel_priority),
                           include_words=args.include or [], exclude_words=args.exclude or [], playlist_name=args.playlist_name)
             if args.suggested:
                 matches = [item for item in suggestions(args, state) if item['name'].casefold() == name.casefold()]
@@ -228,6 +258,9 @@ def local_command(args, state):
             print(describe(topic))
             print('Description: ' + topic['description'])
             print('Channels: ' + ', '.join(topic['channels']))
+            print('Channel priorities (default medium; weighted high:medium:low = 3:2:1):')
+            for channel_id in topic['channels']:
+                print(f"  {channel_id}: {topic['channel_priorities'].get(channel_id, 'medium')}")
             print('Include title phrases: ' + ', '.join(topic['include_words']))
             print('Exclude title phrases: ' + ', '.join(topic['exclude_words']))
         elif args.action == 'remove':
@@ -246,6 +279,11 @@ def local_command(args, state):
             if args.channel is not None or args.add_channel or args.remove_channel:
                 fields['channels'] = sorted((set(args.channel if args.channel is not None else topic['channels'])
                                              | set(args.add_channel)) - set(args.remove_channel))
+            if args.channel_priority:
+                selected = fields.get('channels', topic['channels'])
+                if set(dict(args.channel_priority)) - set(selected):
+                    raise ValueError('Set priorities only for channels selected in this topic; add the channel first or in the same edit.')
+                fields['channel_priorities'] = dict(topic['channel_priorities'], **dict(args.channel_priority))
             edit_topic(state, topic, fields)
             print(describe(state.by_id(topic['id'])))
         return 0
@@ -297,7 +335,8 @@ def main(argv=None) -> int:
                     classifier = (Classifier(state, llm_settings(args.llm_config))
                                   if state.meta('mode', 'text') == 'llm' and args.command != 'reconcile' else None)
                     try:
-                        return Sync(api, state, classifier=classifier).run(topic_name=getattr(args, 'name', None),
+                        return Sync(api, state, classifier=classifier,
+                                    refresh_subscriptions=getattr(args, 'refresh_subscriptions', False)).run(topic_name=getattr(args, 'name', None),
                             preview=preview, reconcile_only=args.command == 'reconcile',
                             all_topics=getattr(args, 'all', False))
                     finally:
