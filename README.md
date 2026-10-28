@@ -437,11 +437,48 @@ yt-playlists auto --budget 2000
 yt-playlists auto --preview
 ```
 
-The default local YouTube budget is 9,500 units per Pacific calendar day. Reads
-and writes made by topic updates are counted before dispatch. Subscription exports
-and the one-off test command aren't included in that local ledger, nor are other
-apps using your Google project, so leave some headroom. YouTube's own quota is
-always authoritative. The app stops gracefully when either limit is reached.
+The default local YouTube budget is 9,500 units per Pacific calendar day. Its
+usage counter is saved in the database and shared by every run using that state
+file. Restarting the script doesn't reset it. Each new quota day starts at
+midnight Pacific time, independently of the timezone used for topic schedules.
+Reads and writes made by topic updates are counted before dispatch. Subscription
+exports and the one-off test command aren't included in that local ledger, nor
+are other apps using your Google project, so the count is an estimate of our
+tracked usage rather than a reading of Google's remaining allowance.
+
+`settings --daily-budget` changes the saved **daily ceiling**, not the usage
+already recorded. For example, if today's count is 10,000 units, changing the
+ceiling to 10,500 gives another 500 units of local headroom. It doesn't reset our
+counter or increase Google's quota. You can check the count, run an update, and
+raise the ceiling a little if the local limit stops you first:
+
+```sh
+yt-playlists settings --daily-budget 10000
+yt-playlists status
+yt-playlists auto
+yt-playlists settings --daily-budget 10500
+yt-playlists auto
+```
+
+The messages distinguish a **local budget pause** from **YouTube daily quota
+exhaustion**. A local pause means our estimated allowance ran out; Google hasn't
+necessarily rejected a request. If Google does report daily quota exhaustion,
+that fact is saved too, and further updates stop until the next Pacific quota
+day. Raising the local ceiling after that won't make the script keep sending
+requests that Google has already refused.
+
+`auto --budget 2000` sets a separate **per-run allowance**. That run stops when
+either its own allowance or the remaining daily allowance is used up. Spending
+from a per-run allowance also counts towards the daily total; it isn't an extra
+allocation. `auto --daily-budget NUMBER` overrides the daily ceiling for that
+command only, while `settings --daily-budget NUMBER` saves it for future runs.
+
+The local ceiling also feeds the estimate used to size round-robin turns. Setting
+it much higher than Google's actual quota will tend to produce the maximum five
+changes per playlist turn, even when the real allowance is nearly gone. The
+five-change cap and saved rotation still apply, but using a realistic ceiling
+helps the app spread the remaining work into smaller turns. There isn't currently
+a separate batch-planning quota setting.
 
 Adding or removing a playlist item costs 50 units; list requests generally cost
 one unit per page. Google's [quota documentation](https://developers.google.com/youtube/v3/determine_quota_cost)
