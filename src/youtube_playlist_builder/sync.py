@@ -1,13 +1,15 @@
 """Incremental playlist synchronisation, with quota-aware discovery and recovery.
 
-Sync snapshots the enabled queue, checks account ownership, and processes one
-topic at a time. Discovery batches metadata across channels and shares reads
+Sync snapshots the enabled queue, checks account ownership, and shares writes
+between topics in bounded rounds. Discovery batches metadata across channels and shares reads
 within the run. The local item ledger supplies deletion IDs; write intents and
 returned IDs make partial updates recoverable without duplicating remote work.
 Do not remove content after a partial discovery or uncertain model response.
 """
 
+from collections import deque
 from datetime import timedelta
+from itertools import zip_longest
 
 from .videos import duration_seconds
 from .terminal import progress
@@ -25,8 +27,8 @@ class Sync:
     """Reconcile desired topic contents against durable local playlist-item records.
 
     Discovery is shared within a run, not across runs, to keep subscriptions and
-    availability fresh. Known age expirations may happen first, but content-based
-    removals wait for complete discovery and valid model decisions.
+    availability fresh. Additions and cleanup share bounded turns after complete discovery and valid
+    model decisions. Each write is recorded before yielding to another topic.
     """
     def __init__(self, api, state, *, now=utcnow, report=print, classifier=None):
         """Start a run with independent in-memory feed/metadata caches and optional classifier."""
@@ -213,11 +215,17 @@ class Sync:
             self.state.clear_pending(topic['id'])
 
     def update_topic(self, topic, *, preview=False):
-        """Expire, discover, classify, diff and apply one topic’s incremental update.
+        """Drain one topic's work for explicit updates and read-only previews."""
+        for _ in self.topic_steps(topic, preview=preview):
+            pass
+
+    def topic_steps(self, topic, *, preview=False):
+        """Discover, classify and yield after each durable mutation in one topic’s plan.
 
         Preview reads/caches but never writes playlists or advances success dates.
         Persist each successful mutation immediately so a later budget pause keeps
-        useful work. Only a fully completed update earns a new scheduled date.
+        useful work. Yields True on the final mutation; only complete updates earn
+        a new scheduled date. The generator is reused between automatic rounds.
         """
         if not topic['channels']:
             raise ValueError('No channels are selected. Use topics set NAME --channel CHANNEL_ID or edit the topic in the menu.')
@@ -225,13 +233,6 @@ class Sync:
         if self.state.pending(topic['id']) or (topic['playlist_id'] and
                 (not topic['reconciled_at'] or parse_time(topic['reconciled_at']) <= now - timedelta(days=7))):
             topic = self.reconcile(topic)
-        cutoff = now - timedelta(days=topic['max_age_days'])
-        expired = [item for item in self.state.items(topic['id'])
-                   if item['published_at'] and parse_time(item['published_at']) < cutoff]
-        # Expiration depends only on saved publication dates, so it needs no feed read.
-        if not preview:
-            for item in expired:
-                self.remove_item(topic, item)
         desired = self.recent_videos(topic, now)
         minimum = self.state.meta('minimum_video_seconds', 0)
         retained = {}
@@ -257,12 +258,24 @@ class Sync:
         rename = bool(topic['playlist_id'] and topic['remote_title'] != playlist_title(topic))
         cost = 50 * (len(remove) + len(add) + int(not topic['playlist_id']) + int(rename))
         self.report(f"{topic['name']}: {len(desired)} recent videos; add {len(add)}, "
-                    f"remove {len(remove) + (0 if preview else len(expired))}; "
+                    f"remove {len(remove)}; "
                     f"{'estimated ' if preview else 'remaining '}write cost {cost} units.")
         if preview:
             for video in sorted(desired.values(), key=lambda item: item['published_at'], reverse=True):
                 self.report(f"  {video['published_at'][:10]}  {video['title']}  https://youtu.be/{video['video_id']}")
             return
+        remaining = cost // 50
+        completed = False
+
+        def record_step():
+            """Mark completion before yielding the final write, even at a budget boundary."""
+            nonlocal remaining, completed
+            remaining -= 1
+            if remaining == 0:
+                self.finish_topic(topic)
+                completed = True
+            return completed
+
         title = playlist_title(topic)
         snippet = {'title': title, 'description': f"Recent videos from my subscriptions.\nyoutube-playlist-builder topic:{topic['marker']}"}
         if not topic['playlist_id']:
@@ -272,30 +285,50 @@ class Sync:
                 self.state._update(topic['id'], dict(playlist_id=result['id'], remote_title=title, reconciled_at=now.isoformat()))
                 self.state.clear_pending(topic['id'])
             topic = self.state.by_id(topic['id'])
+            yield record_step()
         elif rename:
             self.write(topic, 'rename', {}, 'playlists', 'update', part='snippet,status',
                        body={'id': topic['playlist_id'], 'snippet': snippet, 'status': {'privacyStatus': 'private'}})
             with self.state.db:
                 self.state._update(topic['id'], dict(remote_title=title))
                 self.state.clear_pending(topic['id'])
-        for index, item in enumerate(remove, 1):
-            progress(f"Removing video {index}/{len(remove)}…")
-            self.remove_item(topic, item)
-        for index, video in enumerate(sorted(add, key=lambda item: item['published_at']), 1):
-            progress(f'Adding video {index}/{len(add)}…')
-            result = self.write(topic, 'insert', video, 'playlistItems', 'insert', part='snippet',
-                body={'snippet': {'playlistId': topic['playlist_id'], 'position': 0,
-                                   'resourceId': {'kind': 'youtube#video', 'videoId': video['video_id']}}})
-            with self.state.db:
-                self.state.put_item(topic['id'], dict(item_id=result['id'], **video))
-                self.state.clear_pending(topic['id'])
+            yield record_step()
+        # Alternate fresh additions and cleanup. A long removal backlog must not
+        # consume every turn before this playlist gets something new to watch.
+        newest = sorted(add, key=lambda item: item['published_at'], reverse=True)
+        for video, item in zip_longest(newest, remove):
+            if video is not None:
+                # A long-running round must not insert a video that aged out while waiting.
+                if parse_time(video['published_at']) >= self.now() - timedelta(days=topic['max_age_days']):
+                    progress(f"Adding a video to {topic['name']}…")
+                    # Insert older backlog behind newer saved entries without moving them.
+                    position = sum(1 for saved in self.state.items(topic['id'])
+                                   if saved['published_at'] and parse_time(saved['published_at']) > parse_time(video['published_at']))
+                    result = self.write(topic, 'insert', video, 'playlistItems', 'insert', part='snippet',
+                        body={'snippet': {'playlistId': topic['playlist_id'], 'position': position,
+                            'resourceId': {'kind': 'youtube#video', 'videoId': video['video_id']}}})
+                    with self.state.db:
+                        self.state.put_item(topic['id'], dict(item_id=result['id'], **video))
+                        self.state.clear_pending(topic['id'])
+                    yield record_step()
+                else:
+                    record_step()
+            if item is not None:
+                progress(f"Removing a video from {topic['name']}…")
+                self.remove_item(topic, item)
+                yield record_step()
+        if not completed:
+            self.finish_topic(topic)
+
+    def finish_topic(self, topic):
+        """Record full completion once; partial turns deliberately remain due."""
         finished = self.now()
         self.state.update(topic['id'], last_success=finished.isoformat(),
                           next_due=staggered_due(self.state, topic, finished).isoformat(), last_error=None)
         self.report(f"Updated {topic['name']}: https://www.youtube.com/playlist?list={topic['playlist_id']}")
 
     def run(self, *, topic_name=None, preview=False, reconcile_only=False, all_topics=False):
-        """Visit a fixed queue once, advancing the cursor even when a topic only partly completes.
+        """Visit a fixed eligible queue in adaptive rounds, persisting the cursor each turn.
 
         Manual updates may target disabled topics; auto/all exclude them. Budget
         exhaustion pauses the run, while recoverable per-topic errors allow later
@@ -316,31 +349,53 @@ class Sync:
             self.report(str(error))
             return 2
         failed = False
-        for index, original in enumerate(topics, 1):
-            progress(f"Topic {index}/{len(topics)}: {original['name']}…")
-            topic = self.state.by_id(original['id'])
+        # A generator holds the completed discovery/model plan between rounds.
+        # Its successful writes are durable, but the plan is never trusted after restart.
+        queue = deque((topic['id'], None) for topic in topics)
+        automatic = not topic_name and not preview and not reconcile_only
+        while queue:
+            topic_id, steps = queue.popleft()
+            topic = self.state.by_id(topic_id)
+            allowance = max(1, min(5, self.api.remaining() // (50 * (len(queue) + 1)))) if automatic else None
+            progress(f"{topic['name']}: up to {allowance} changes this turn; {len(queue)} other playlists waiting…"
+                     if automatic else f"Updating {topic['name']}…")
             if not preview and not reconcile_only:
-                # Rotate even if this topic only partially completes. Its successful
-                # writes persist, but it stays due until the whole update finishes.
+                # Advance before discovery/writes too: even an interrupted slow topic
+                # must give the following topic a chance when the user resumes.
                 with self.state.db:
-                    self.state._update(topic['id'], {'last_attempt': self.now().isoformat(), 'next_due': None})
+                    self.state._update(topic_id, {'last_attempt': self.now().isoformat(), 'next_due': None})
                     if not topic_name:
-                        self.state.db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)', ('cursor', str(topic['id'])))
+                        self.state.db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)', ('cursor', str(topic_id)))
             try:
                 if reconcile_only:
                     self.reconcile(topic)
                     self.report(f"Reconciled {topic['name']} with YouTube.")
-                else:
-                    self.update_topic(topic, preview=preview)
+                    continue
+                if steps is None:
+                    steps = self.topic_steps(topic, preview=preview)
+                if not automatic:
+                    for _ in steps:
+                        pass
+                    continue
+                completed = False
+                for _ in range(allowance):
+                    if next(steps):
+                        completed = True
+                        steps.close()
+                        break
+                if not completed:
+                    queue.append((topic_id, steps))
+            except StopIteration:
+                pass
             except QuotaStop as error:
                 if not preview:
-                    self.state.update(topic['id'], last_error=str(error))
+                    self.state.update(topic_id, last_error=str(error))
                 self.report(f"Paused at {topic['name']}: {error}")
                 return 2
             except (ApiFailure, ConnectionFailure, ValueError) as error:
                 failed = True
                 if not preview:
-                    self.state.update(topic['id'], last_error=str(error))
+                    self.state.update(topic_id, last_error=str(error))
                 self.report(f"Could not update {topic['name']}: {error}")
                 if isinstance(error, ConnectionFailure):
                     return 1

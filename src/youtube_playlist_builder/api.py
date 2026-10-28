@@ -49,6 +49,13 @@ class YouTube:
         """Use YouTube’s Pacific reset date, independently of the user’s scheduling timezone."""
         return self.now().astimezone(ZoneInfo('America/Los_Angeles')).date().isoformat()
 
+    def remaining(self):
+        """Return conservative remaining units across the shared daily and run budgets."""
+        ledger = self.state.quota(self.day())
+        if ledger['exhausted']:
+            return 0
+        return max(0, min(self.run_budget - self.spent, self.daily_budget - ledger['used']))
+
     def check(self, cost):
         """Reject a request before dispatch when its full cost cannot fit either allowance."""
         ledger = self.state.quota(self.day())

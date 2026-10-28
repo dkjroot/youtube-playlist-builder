@@ -16,8 +16,7 @@ scheduling or playlist updates apply to both interfaces.
 3. `sync.py` checks the signed-in account against the owner saved in the database.
    It recovers unresolved writes or periodically reconciles a playlist before
    relying on its local item records.
-4. Known expired items can be removed directly using their saved playlist-item
-   IDs. The app then reads the current subscriptions and the selected channels'
+4. The app reads the current subscriptions and the selected channels'
    upload feeds. It collects recent video IDs across channels and requests their
    details in groups of up to 50.
 5. Age, title and minimum-duration filters narrow the candidates. In LLM mode,
@@ -28,6 +27,18 @@ scheduling or playlist updates apply to both interfaces.
    applies only additions, removals and necessary playlist title/privacy changes.
    Each returned item ID is saved immediately. Only a fully completed update
    records a new success time and next scheduled date.
+7. Automatic updates suspend each topic after a bounded turn and move to the next
+   unfinished topic. The allowance is `remaining_units // (50 * active_topics)`,
+   clamped to one through five mutations. All writes count, including creation and
+   renaming. Reads are still charged by the gateway and can exhaust the budget
+   before the estimated allowance is used. A topic's generator retains the
+   discovery/classification plan for later rounds without repeating those calls.
+   Additions and removals alternate, beginning with the newest new video. New
+   entries use saved publication dates to choose an insertion position without
+   reordering existing items. Completion is recorded before yielding the final
+   mutation, not deferred until another round. Failed topics leave this run's
+   queue; quota exhaustion stops the whole run. Manual updates drain one generator
+   directly, while previews walk each full plan without mutations.
 
 ## Where quota goes
 

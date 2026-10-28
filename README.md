@@ -263,10 +263,27 @@ yt-playlists status
 ```
 
 Auto mode visits enabled topics that are due, starting after the last topic it
-attempted. If the API budget runs out halfway through, completed changes stay
-saved and the incomplete topic stays due. The next run starts with the following
-topic, so one busy subject won't always get first dibs. If everything fits, all
-due topics are updated in that run. Frequencies count calendar days after a
+attempted. It works in rounds instead of filling one playlist before moving on.
+Each turn allows between one and five playlist changes, estimated from the quota
+left and the number of unfinished playlists. Creation and renaming count as
+changes too, so they don't bypass the allowance. The estimate is recalculated
+on each turn; YouTube reads still consume quota, and the hard budget always wins.
+
+New videos are added newest first, alternating with removals when cleanup is
+needed. Each playlist gets a turn before an unfinished one gets another batch.
+Completed changes stay saved if quota runs out, and the incomplete topic stays
+due. The next run starts after the last attempted topic. If everything fits, all
+due topics finish during the same run. Discovery and LLM plans are reused between
+rounds, so taking another turn doesn't repeat those requests. A new command
+refreshes discovery and resumes from the item IDs already saved.
+
+The same rounds apply to `auto --all` and the menu's update-all option. Manual
+`update NAME` concentrates on that one topic. Previews show the complete proposed
+changes without advancing the queue. Fair turns improve the spread of work, but
+there may still be too little quota for every playlist, and some have no new
+matching videos.
+
+Frequencies count calendar days after a
 successful update, with an automatically assigned calendar slot to spread the
 work out. Ten topics set to every two days will be split five-and-five across
 alternating days. New playlists can be filled straight away; their first
@@ -446,8 +463,8 @@ Use the provider's own spending controls as well.
 Hosted models receive the titles, descriptions, IDs and topic definitions needed
 for classification. They never receive your YouTube login token. If a model fails
 or returns invalid decisions, the app reports the problem rather than quietly
-switching to text mode. Already-expired videos may have been removed beforehand,
-but model failure doesn't trigger content-based removals. An uncertain decision
+switching to text mode. Discovery and classification must finish before that
+topic's playlist changes begin; a model failure doesn't trigger removals. An uncertain decision
 keeps an existing video until its age limit, and doesn't add a new one.
 
 The reused Iris client and its GPL-3.0-only licence are included under

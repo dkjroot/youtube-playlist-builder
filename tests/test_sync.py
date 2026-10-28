@@ -90,7 +90,7 @@ class FakeYouTube:
             if method == 'insert':
                 self.count += 1
                 item = {'id': f'item{self.count}', 'snippet': p['body']['snippet']}
-                self.items[item['snippet']['playlistId']].insert(0, item)
+                self.items[item['snippet']['playlistId']].insert(item['snippet'].get('position', 0), item)
                 return item
             if method == 'delete':
                 for items in self.items.values():
@@ -159,9 +159,9 @@ class SyncTests(unittest.TestCase):
         for name in ('first', 'second', 'third'):
             self.topic(name, frequency='weekly')
         self.assertEqual(self.sync(budget=155).run(all_topics=True), 2)
-        self.assertIsNotNone(self.state.topic('first')['last_success'])
+        self.assertIsNone(self.state.topic('first')['last_success'])
         self.assertIsNone(self.state.topic('second')['next_due'])
-        self.assertEqual(self.state.meta('cursor'), self.state.topic('second')['id'])
+        self.assertEqual(self.state.meta('cursor'), self.state.topic('first')['id'])
         self.assertEqual(self.sync().run(all_topics=True), 0)
         self.assertTrue(all(row['last_success'] for row in self.state.topics()))
 
@@ -215,14 +215,14 @@ class SyncTests(unittest.TestCase):
         for name in ('chess', 'engineering', 'piano'):
             self.topic(name)
         self.assertEqual(self.sync(budget=155).run(), 2)
-        self.assertIsNotNone(self.state.topic('chess')['last_success'])
+        self.assertIsNone(self.state.topic('chess')['last_success'])
         self.assertIsNone(self.state.topic('engineering')['last_success'])
         self.assertIsNotNone(self.state.topic('engineering')['playlist_id'])
-        self.assertEqual(self.state.meta('cursor'), 2)
+        self.assertEqual(self.state.meta('cursor'), 1)
         self.state.close()
         self.state = State(self.path)
         queue = due_topics(self.state.topics(), self.state.meta('cursor'), self.now)
-        self.assertEqual([topic['name'] for topic in queue], ['piano', 'engineering'])
+        self.assertEqual([topic['name'] for topic in queue], ['engineering', 'piano', 'chess'])
         self.assertEqual(self.sync(budget=200).run(), 0)
         self.assertEqual(len(self.server.playlist_data), 3)
         self.assertTrue(all(topic['last_success'] for topic in self.state.topics()))
