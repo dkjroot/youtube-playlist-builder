@@ -295,11 +295,25 @@ than one topic. **Hide categorised channels** hides anything already assigned,
 including channels in paused topics, so you can work through what's left. Click
 a topic on the left to browse its channels instead.
 
+To find a topic quickly, hold **right Control** or **right Command**, say a word
+or two, then release the key. A dialog appears with matching topics: “photo” can
+find Photography, and “engineering” can find several engineering categories.
+Click a topic to save the assignment and close the dialog. Nothing is assigned
+just because you said it. The text box contains what the browser heard; edit it
+to filter the suggestions straight away. **Find a topic** opens the same box for
+typing without using the microphone. Escape cancels.
+
+Voice uses your browser's speech recognition where available. Try Chrome and
+allow microphone access when asked. The browser may send audio to its online
+speech service; this app doesn't record or store it. Topic matching happens
+locally, with partial names and small spelling errors supported. If speech isn't
+available or doesn't hear you properly, you can still type in the dialog.
+
 If you usually want each channel in just one topic, enable **One topic per
-channel** beside the Topics heading above the channel’s topic choices. Choosing a new topic then unticks its previous
-topic and saves the move in one go. The preference is remembered and is off by
-default. Turning it on doesn't rearrange existing assignments. Channels already
-in multiple topics stay under manual control until you untick the extras. This
+channel** beside the Topics heading above the channel’s topic choices. Choosing a topic then removes the channel from all other
+topics and saves the move in one go. The preference is remembered and is off by
+default. Turning it on doesn't rearrange existing assignments. If a channel is already
+in several topics, choosing one keeps just that topic. This
 mode applies to the organiser; the main editor and CLI still let you manage
 memberships explicitly. You can also change the preference from the command line:
 

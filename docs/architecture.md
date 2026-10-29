@@ -271,9 +271,19 @@ cannot safely stand in for complete older discovery or reconciliation.
 
 
 Optional `single_topic_channels` preference (default false) controls only organiser
-assignment. On a new checked assignment with exactly one previous membership, the
-old membership is removed in the same database transaction as the new assignment.
+assignment. On a checked assignment, all other memberships are removed in the same database
+transaction as the chosen assignment, including when the chosen topic already contains the channel.
 `edit_topic(commit=False)` is restricted to channel-only edits and participates in
 the caller's transaction; validation/pending failures roll back both topics.
-Existing overlaps are left intact for manual resolution. Preferences persist via
+Existing overlaps are resolved only when a topic is explicitly chosen. Preferences persist via
 normal settings endpoint/CLI (`--single-topic-channels on|off`).
+
+
+`organiser-voice.js` owns optional browser SpeechRecognition sessions, using right
+Control or right Command as push-to-talk. Release stops audio and opens a native
+modal with an editable transcript and local partial/fuzzy topic matches. A click
+calls the normal assignment route; recognition alone never writes. Sessions bind
+to the selected channel, invalidate late callbacks on cancellation/typing/selection,
+and abort on blur, hidden page, Escape or a 20-second listening limit. A bounded
+final-result wait keeps typing usable even if the browser service stalls. Browser
+speech may be remote; no audio/transcript is persisted or sent to the local API.

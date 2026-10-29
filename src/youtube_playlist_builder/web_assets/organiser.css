@@ -26,3 +26,11 @@
 .assignment-heading h3 { margin:0; }
 #single-topic-option { display:flex; align-items:center; gap:8px; margin:0; font-size:13px; }
 #single-topic-option input { width:auto; margin:0; }
+
+.voice-help { margin:0 0 18px; }
+.voice-help p { margin:8px 0; }
+#voice-dialog { background:var(--panel, #18271f); color:var(--text, #edf5ef); border:1px solid #81cfa7; border-radius:10px; width:min(520px, 85vw); padding:24px; }
+#voice-dialog::backdrop { background:#000a; }
+#voice-query { width:100%; }
+#voice-results { display:grid; gap:8px; max-height:40vh; overflow:auto; margin:16px 0; }
+#voice-results button { text-align:left; }

@@ -59,13 +59,14 @@ class SingleTopicTests(unittest.TestCase):
         self.assign("target", False)
         self.assertNotIn(A, self.state.topic("target")["channels"])
 
-    def test_existing_overlaps_are_left_for_manual_resolution(self):
+    def test_existing_overlaps_move_to_chosen_topic(self):
         self.assign("target")
         self.state.add("third", channels=[])
         self.state.set_meta("single_topic_channels", True)
         self.assign("third")
-        for topic in self.state.topics():
-            self.assertIn(A, topic["channels"])
+        self.assertEqual(self.state.topic("third")["channels"], [A])
+        for name in ("source", "target"):
+            self.assertNotIn(A, self.state.topic(name)["channels"])
 
     def test_pending_source_rolls_back_target_move(self):
         self.state.set_meta("single_topic_channels", True)
@@ -73,4 +74,21 @@ class SingleTopicTests(unittest.TestCase):
         self.state.begin_write(self.state.topic("source")["id"], "insert", {})
         with self.assertRaisesRegex(ValueError, "Reconcile"):
             self.assign("target")
+        self.assertEqual(self.state.topics(), before)
+
+    def test_choosing_current_topic_clears_other_memberships(self):
+        self.assign("target")
+        self.state.set_meta("single_topic_channels", True)
+        self.assign("target")
+        self.assertIn(A, self.state.topic("target")["channels"])
+        self.assertNotIn(A, self.state.topic("source")["channels"])
+
+    def test_pending_overlap_rolls_back_all_memberships(self):
+        self.assign("target")
+        self.state.add("third", channels=[])
+        self.state.set_meta("single_topic_channels", True)
+        before = self.state.topics()
+        self.state.begin_write(self.state.topic("target")["id"], "insert", {})
+        with self.assertRaisesRegex(ValueError, "Reconcile"):
+            self.assign("third")
         self.assertEqual(self.state.topics(), before)

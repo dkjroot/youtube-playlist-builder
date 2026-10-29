@@ -1,8 +1,15 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="yt-local" content="__TOKEN__"><title>Organise channels</title><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/organiser.css"><script src="/organiser.js" defer></script></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="yt-local" content="__TOKEN__"><title>Organise channels</title><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/organiser.css"><script src="/organiser-voice.js" defer></script><script src="/organiser.js" defer></script></head>
 <body><header><div><h1>Organise channels</h1><p>Browse your subscriptions and assign them to topics.</p></div><a href="/">Playlist manager</a></header>
 <div id="notice" role="status" aria-live="polite"></div>
-<div id="preference-store" hidden><label id="single-topic-option" title="Saved for all channels. Choosing a new topic moves a channel from its current topic; existing overlaps stay until you untick them."><input id="single-topic" type="checkbox"> One topic per channel</label></div>
+<div id="preference-store" hidden><label id="single-topic-option" title="Saved for all channels. Choosing a topic removes this channel from all other topics."><input id="single-topic" type="checkbox"> One topic per channel</label></div>
+<section class="voice-help"><button id="voice-open" type="button">Find a topic</button> <span id="voice-hint">Choose a channel, then hold right Control or right Command and say a topic. Release to choose.</span><p class="muted">Your browser may send speech to its online recognition service. Only the topic you click is saved. You can also type in the topic finder.</p></section>
+<dialog id="voice-dialog" aria-labelledby="voice-title">
+<h2 id="voice-title">Choose a topic</h2><p id="voice-channel"></p>
+<p id="voice-status" role="status" aria-live="polite"></p>
+<label>Topic words<input id="voice-query" type="search" autocomplete="off" placeholder="Try photo or engineering"></label>
+<div id="voice-results"></div><button id="voice-close" type="button">Cancel</button>
+</dialog>
 <main class="organiser-layout">
 <aside class="panel"><h2>Topics</h2><div id="topic-filters"></div><details><summary>Create a topic</summary><form id="new-topic"><label>Topic name<input id="topic-name" required maxlength="120"></label><label><input id="topic-enabled" type="checkbox"> Enable automatic playlist updates</label><button type="submit">Create topic</button></form></details></aside>
 <section class="panel"><h2>Channels</h2><label>Find a channel<input id="search" type="search" placeholder="Name or description"></label><label class="hide-assigned"><input id="hide-assigned" type="checkbox"> Hide categorised channels</label><p id="channel-count" class="muted"></p><div id="channels" class="channel-browser"></div></section>

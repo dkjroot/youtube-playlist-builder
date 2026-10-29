@@ -80,12 +80,13 @@ function renderMemberships() {
     box.append(label);
   }
   if (state.settings.single_topic_channels && memberships(selected).length > 1) {
-    box.append(node('p','This channel is in multiple topics. Untick extras to use automatic moves.', 'muted'));
+    box.append(node('p','Choose a topic to keep only that membership.', 'muted'));
   }
   if (!state.topics.length) box.append(node('p','Create a topic on the left to start categorising.'));
 }
 /** Show descriptions immediately; guard asynchronous details against rapid selection changes. */
 async function choose(cid) {
+  topicVoice.cancel();
   selected = cid;
   const request = ++detailRequest;
   render();
@@ -183,4 +184,11 @@ async function start() {
   try { state = await api('/api/state'); render(); }
   catch (error) { notice(error.message,true); }
 }
+const topicVoice = new TopicVoice({
+  getChannel: () => selected,
+  getTitle: () => state?.channels.find(c => c.channel_id === selected)?.title || '',
+  getTopics: () => state?.topics || [],
+  isBusy: () => busy,
+  assign: topic => assign(topic, true),
+});
 start();

@@ -358,7 +358,10 @@ def make_server(args, port, *, session_token=None):
                     .replace("__TOKEN__", token)
                 )
                 return self.reply(200, page.encode(), "text/html")
-            if path in ("/app.js", "/app.css", "/organiser.js", "/organiser.css"):
+            if path in (
+                "/app.js", "/app.css", "/organiser.js", "/organiser.css",
+                "/organiser-voice.js",
+            ):
                 return self.reply(
                     200,
                     (ASSETS / path[1:]).read_bytes(),

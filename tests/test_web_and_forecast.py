@@ -181,6 +181,7 @@ class WebTests(unittest.TestCase):
         with patch("youtube_playlist_builder.web.subprocess.Popen") as process:
             self.assertEqual(self.request("GET", "/organiser")[0], 200)
             self.assertEqual(self.request("GET", "/organiser.js")[0], 200)
+            self.assertEqual(self.request("GET", "/organiser-voice.js")[0], 200)
             self.assertEqual(self.request("GET", "/api/channel?id=" + A)[0], 403)
             self.assertEqual(
                 self.api(

@@ -38,8 +38,8 @@ def assign_channel(args, body):
     """Change just one membership against fresh state, preserving other channel edits.
 
     Standard topic validation also maintains firm capacities and refuses uncertain
-    pending writes. Optional single-topic mode moves only channels currently in
-    one topic; existing overlaps remain manual. Moves share a database transaction.
+    pending writes. Optional single-topic mode removes all other memberships,
+    including existing overlaps. All changes share a database transaction.
     Disabled topics are useful as organisation-only categories.
     """
     cid, name, assigned = (
@@ -56,29 +56,27 @@ def assign_channel(args, body):
         with state.locked():
             topic = state.topic(name)
             channels = set(topic["channels"])
-            if (cid in channels) == assigned:
-                return
             if assigned:
                 channels.add(cid)
             else:
                 channels.discard(cid)
             previous = [t for t in state.topics() if cid in t["channels"]]
             move_from = (
-                previous[0]
-                if assigned
-                and state.meta("single_topic_channels", False)
-                and len(previous) == 1
-                else None
+                [t for t in previous if t["id"] != topic["id"]]
+                if assigned and state.meta("single_topic_channels", False)
+                else []
             )
+            if (cid in topic["channels"]) == assigned and not move_from:
+                return
             # Both sides commit together. Pending writes or validation failures
             # in either topic leave the original membership/allocations intact.
             with state.db:
                 edit_topic(state, topic, {"channels": sorted(channels)}, commit=False)
-                if move_from:
+                for source in move_from:
                     edit_topic(
                         state,
-                        move_from,
-                        {"channels": [c for c in move_from["channels"] if c != cid]},
+                        source,
+                        {"channels": [c for c in source["channels"] if c != cid]},
                         commit=False,
                     )
     finally:
