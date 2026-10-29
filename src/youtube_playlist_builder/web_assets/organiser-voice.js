@@ -33,6 +33,30 @@ function matchingTopics(topics, phrase) {
     return {topic, score};
   }).filter(item => Number.isFinite(item.score)).sort((a, b) => a.score - b.score || a.topic.name.localeCompare(b.topic.name)).map(item => item.topic);
 }
+/** Put previously chosen topics first without hiding ordinary name matches. */
+function learnedTopics(topics, phrase, learned = []) {
+  const key = topicWords(phrase);
+  const counts = new Map(learned.filter(item => item.phrase === key).map(item => [item.topic_id, item.uses]));
+  return topics.filter(topic => counts.has(topic.id)).sort((a, b) => counts.get(b.id) - counts.get(a.id) || a.name.localeCompare(b.name));
+}
+/** Suggest existing topics from the selected channel's title and description.
+ * Ignore generic filler, weight title evidence more strongly, and allow useful
+ * stems such as photo/photography. Suggestions never create assignments.
+ */
+function channelTopics(topics, channel) {
+  const filler = new Set('about all also any but can content do does has into its just like more most not only other out some subscribe than these those through tips was which who will a an and are as at be by channel for from have here how i in is it me my new of on one or our that the their this to two us video videos we welcome what with you your'.split(' '));
+  const words = text => [...new Set(topicWords(text || '').split(' ').filter(word => !filler.has(word) && (word.length >= 3 || ['ai', 'vr', 'rc', 'dj', '3d'].includes(word))))];
+  const title = words((channel?.title || '').slice(0, 500));
+  const description = words((channel?.description || '').slice(0, 4000));
+  const evidence = (word, tokens) => tokens.some(token => token === word) ? 2 :
+    tokens.some(token => Math.min(token.length, word.length) >= 4 && (token.startsWith(word) || word.startsWith(token))) ? 1 : 0;
+  return topics.map(topic => {
+    const names = words(topic.name), details = words((topic.description || '').slice(0, 1000)).filter(word => !names.includes(word));
+    const score = names.reduce((sum, word) => sum + 4 * evidence(word, title) + 2 * evidence(word, description), 0) +
+      details.reduce((sum, word) => sum + evidence(word, title) + .5 * evidence(word, description), 0);
+    return {topic, score};
+  }).filter(item => item.score > 0).sort((a, b) => b.score - a.score || a.topic.name.localeCompare(b.topic.name)).slice(0, 10).map(item => item.topic);
+}
 /** Own one short push-to-talk session, tied to the channel visible at its start. */
 class TopicVoice {
   constructor(options) {
@@ -47,11 +71,22 @@ class TopicVoice {
     this.channel = null;
     this.timer = null;
     this.query.maxLength = 120;
-    this.query.oninput = () => { this.abort(); this.draw(); };
-    document.getElementById('voice-open').onclick = () => this.open(true);
+    this.query.oninput = () => { this.abort(); this.say('Choose a topic below, or keep typing to filter.'); this.draw(); };
+    document.getElementById('voice-open').onclick = () => this.open();
     document.getElementById('voice-close').onclick = () => this.cancel();
     this.dialog.addEventListener('cancel', event => { event.preventDefault(); this.cancel(); });
-    this.dialog.addEventListener('close', () => this.abort());
+    this.dialog.addEventListener('close', () => { if (!this.dialog.open) this.cancel(); });
+    // Only dismiss a click that starts and ends on the backdrop. Dragging text
+    // outside the dialog, or clicking its padding, must not throw away a query.
+    const outside = event => {
+      const rect = this.dialog.getBoundingClientRect();
+      return event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom;
+    };
+    this.dialog.addEventListener('pointerdown', event => { this.backdropPress = event.target === this.dialog && outside(event); });
+    this.dialog.addEventListener('click', event => {
+      if (this.backdropPress && event.target === this.dialog && outside(event)) this.cancel();
+      this.backdropPress = false;
+    });
     document.addEventListener('keydown', event => {
       if (event.key === 'Escape') { this.cancel(); return; }
       if (!['ControlRight', 'MetaRight'].includes(event.code) || event.repeat || this.held || event.altKey || event.shiftKey) return;
@@ -71,25 +106,25 @@ class TopicVoice {
     this.defaultHint = document.getElementById('voice-hint').textContent;
   }
   /** Open a modal bound to a specific channel; never assign on recognition alone. */
-  open(show = false) {
+  open() {
     if (!this.options.getChannel() || this.options.isBusy()) return false;
     this.abort();
-    if (!show && this.dialog.open) this.dialog.close();
     this.channel = this.options.getChannel();
     this.query.value = '';
+    this.spokenPhrase = '';
     document.getElementById('voice-channel').textContent = 'For: ' + this.options.getTitle();
-    this.say('Type a topic, or hold right Control or right Command to speak.');
+    this.say('Suggestions from this channel. Choose one, type a topic, or hold right Control or right Command to speak.');
     this.draw();
-    if (show) { this.show(); this.query.focus(); }
+    this.show();
     return true;
   }
-  /** Show choices only after key release; the captured channel stays fixed. */
+  /** Show choices immediately, keeping the captured channel fixed. */
   show() {
     if (!this.channel || this.channel !== this.options.getChannel()) return;
     if (!this.dialog.open) this.dialog.showModal();
     this.query.focus(); this.query.select();
   }
-  /** Share microphone feedback outside the modal while the key is held. */
+  /** Keep the dialog status and inline microphone feedback in sync. */
   say(message) {
     this.status.textContent = message;
     document.getElementById('voice-hint').textContent = message;
@@ -108,7 +143,9 @@ class TopicVoice {
     };
     rec.onresult = event => {
       if (this.recognition !== rec || this.channel !== this.options.getChannel()) return;
-      this.query.value = Array.from(event.results).map(result => result[0].transcript).join(' ').slice(0, 120);
+      const transcript = Array.from(event.results).map(result => result[0]?.transcript || '').join(' ').slice(0, 120);
+      this.spokenPhrase = topicWords(transcript) ? transcript : '';
+      this.query.value = this.spokenPhrase;
       this.draw();
     };
     rec.onerror = event => {
@@ -116,23 +153,21 @@ class TopicVoice {
       const messages = {'not-allowed':'Microphone permission was denied. Allow access in your browser, or type below.', 'service-not-allowed':'The browser speech service is unavailable. Try Chrome, or type below.', 'audio-capture':'No microphone is available. Check your input device, or type below.', 'network':'The browser speech service could not connect. Try again, or type below.', 'no-speech':'No speech heard. Hold right Control or right Command to try again, or type below.'};
       this.abort();
       this.say(messages[event.error] || 'Speech recognition stopped. Try again, or type below.');
-      if (!this.held) this.show();
       this.draw();
     };
     rec.onend = () => {
       if (this.recognition !== rec) return;
       clearTimeout(this.timer); this.recognition = null;
-      this.say(this.query.value.trim() ? 'Choose a topic below. You can edit the words if needed.' : 'No speech heard. Try again, or type a topic below.');
-      if (!this.held) this.show();
+      this.say(this.query.value.trim() ? 'Choose a topic below. You can edit the words if needed.' : 'Choose a channel suggestion, type a topic, or hold the key to try speaking again.');
       this.draw();
     };
-    try { rec.start(); this.timer = setTimeout(() => { this.abort(); this.say('Listening stopped after 20 seconds. Release the key to choose or type a topic.'); this.draw(); }, 20000); }
+    try { rec.start(); this.timer = setTimeout(() => { this.abort(); this.say('Listening stopped after 20 seconds. Choose a suggestion or type a topic.'); this.draw(); }, 20000); }
     catch (_) { this.abort(); this.say('Could not start speech recognition. Try again, or type below.'); }
     this.draw();
   }
   /** Stop audio on release and allow a short time for the final transcript. */
   stop() {
-    this.show();
+    if (!this.channel || !this.dialog.open) return;
     this.draw();
     if (!this.recognition) return;
     clearTimeout(this.timer);
@@ -153,20 +188,35 @@ class TopicVoice {
   /** Show text-only suggestions, with an explicit click required for every save. */
   draw() {
     this.results.replaceChildren();
-    const matches = matchingTopics(this.options.getTopics(), this.query.value);
+    const searching = !!this.query.value.trim();
+    const topics = this.options.getTopics();
+    const remembered = searching ? learnedTopics(topics, this.query.value, this.options.getVoiceMatches?.() || []) : [];
+    const ordinary = searching ? matchingTopics(topics, this.query.value) : channelTopics(topics, this.options.getChannelInfo());
+    const matches = [...remembered, ...ordinary.filter(topic => !remembered.includes(topic))];
+    // Keep channel suggestions alongside raw speech matches so a misheard word
+    // can still be taught by clicking. Typed corrections narrow the list normally.
+    if (searching && this.spokenPhrase && this.query.value === this.spokenPhrase) {
+      matches.push(...channelTopics(topics, this.options.getChannelInfo()).filter(topic => !matches.includes(topic)));
+    }
+    if (!searching && matches.length) {
+      const heading = document.createElement('p'); heading.className = 'muted';
+      heading.textContent = 'Suggested from the channel name and description';
+      this.results.append(heading);
+    }
     for (const topic of matches) {
       const button = document.createElement('button');
       button.type = 'button'; button.textContent = topic.name;
-      button.disabled = !!this.held;
+      if (remembered.includes(topic)) button.title = 'Previously chosen for “' + this.query.value.trim() + '”';
       button.onclick = () => {
-        if (this.held || this.options.isBusy() || this.channel !== this.options.getChannel()) return;
-        this.cancel(); this.options.assign(topic);
+        if (this.options.isBusy() || this.channel !== this.options.getChannel()) return;
+        const phrase = this.spokenPhrase;
+        this.cancel(); this.options.assign(topic, phrase);
       };
       this.results.append(button);
     }
     if (!matches.length) {
       const message = document.createElement('p');
-      message.textContent = this.query.value.trim() ? 'No matching topics. Try fewer words, edit the spelling, or create a topic on the left.' : 'Say or type part of an existing topic name.';
+      message.textContent = this.query.value.trim() ? 'No matching topics. Try fewer words, edit the spelling, or create a topic on the left.' : 'No topic suggestions from this channel. Say or type part of a topic name.';
       this.results.append(message);
     }
   }

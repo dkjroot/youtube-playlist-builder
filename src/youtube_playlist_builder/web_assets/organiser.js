@@ -52,13 +52,13 @@ function render() {
   if (!channels.length) $('channels').append(node('p','No channels match these filters.'));
 }
 /** Save one membership at a time; the server merges it with fresh topic settings. */
-async function assign(topic, checked) {
+async function assign(topic, checked, voicePhrase = '') {
   if (busy) return;
   busy = true;
   $('memberships').querySelectorAll('input').forEach(input => input.disabled = true);
   notice('Saving assignment…');
   try {
-    await api('/api/assignment', {channel_id:selected, topic:topic.name, assigned:checked});
+    await api('/api/assignment', {channel_id:selected, topic:topic.name, assigned:checked, ...(voicePhrase ? {voice_phrase:voicePhrase} : {})});
     state = await api('/api/state');
     notice('Assignment saved.');
   } catch (error) { notice(error.message, true); }
@@ -187,8 +187,10 @@ async function start() {
 const topicVoice = new TopicVoice({
   getChannel: () => selected,
   getTitle: () => state?.channels.find(c => c.channel_id === selected)?.title || '',
+  getChannelInfo: () => state?.channels.find(c => c.channel_id === selected),
   getTopics: () => state?.topics || [],
   isBusy: () => busy,
-  assign: topic => assign(topic, true),
+  getVoiceMatches: () => state?.voice_matches || [],
+  assign: (topic, phrase) => assign(topic, true, phrase),
 });
 start();

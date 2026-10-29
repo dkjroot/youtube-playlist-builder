@@ -295,19 +295,36 @@ than one topic. **Hide categorised channels** hides anything already assigned,
 including channels in paused topics, so you can work through what's left. Click
 a topic on the left to browse its channels instead.
 
-To find a topic quickly, hold **right Control** or **right Command**, say a word
-or two, then release the key. A dialog appears with matching topics: “photo” can
-find Photography, and “engineering” can find several engineering categories.
-Click a topic to save the assignment and close the dialog. Nothing is assigned
-just because you said it. The text box contains what the browser heard; edit it
-to filter the suggestions straight away. **Find a topic** opens the same box for
-typing without using the microphone. Escape cancels.
+To find a topic quickly, press **right Control** or **right Command**. The dialog
+opens straight away with up to ten suggested topics, matched locally against the
+channel's name and description. Topic names carry more weight than words in a
+topic's description, and matches in the channel name are also given more
+weight. These are suggestions for you to choose from; nothing is assigned
+automatically.
+
+You can just tap the key and click a suggestion without saying anything. If you
+keep holding the key, voice recognition listens until you release it. Speaking
+or typing searches all your existing topics: “photo” can find Photography, and
+“engineering” can find several engineering categories. The text box contains what
+the browser heard; edit it to filter the results straight away, or clear it to
+return to the channel suggestions. Click a topic to save and close the dialog.
+**Find a topic** opens the same box without starting the microphone. Press Escape
+or click outside the dialog to cancel.
 
 Voice uses your browser's speech recognition where available. Try Chrome and
 allow microphone access when asked. The browser may send audio to its online
-speech service; this app doesn't record or store it. Topic matching happens
+speech service; this app doesn't store audio. Topic matching happens
 locally, with partial names and small spelling errors supported. If speech isn't
 available or doesn't hear you properly, you can still type in the dialog.
+
+The topic finder also learns from your choices. If it hears “since” when you said
+“synth”, correct the text if necessary and choose your synth topic. Next time it
+hears “since”, that topic appears among the suggestions. It remembers the original
+voice phrase even if you edit the text before choosing. Repeated choices rank
+higher, and the same phrase can suggest more than one topic. These learned matches
+are saved locally with your database and included in backups. Empty recognitions
+aren't learned, and typing without speaking doesn't create a voice match. Choosing
+a topic is still required every time.
 
 If you usually want each channel in just one topic, enable **One topic per
 channel** beside the Topics heading above the channel’s topic choices. Choosing a topic then removes the channel from all other
@@ -831,6 +848,57 @@ keeps an existing video until its age limit, and doesn't add a new one.
 
 The reused Iris client and its GPL-3.0-only licence are included under
 `src/youtube_playlist_builder/vendor/iris/`.
+
+## Backing up your topics and channel assignments
+
+Once you've spent a while sorting channels, you probably don't want to do it all
+again. From the project folder, run:
+
+```sh
+yt-playlists backup
+```
+
+This creates a new timestamped ZIP in `.local/backups/` and prints its full path,
+along with the number of topics and assigned channels it contains. You can run
+it while the organiser is open. It uses SQLite's backup API to capture a consistent
+snapshot, including committed changes that haven't yet reached the main database
+file. Each run makes a separate backup and never overwrites an earlier one.
+
+The ZIP contains the whole database: topic definitions, channel assignments,
+settings, schedules, playlist IDs, pending recovery records and cached data. It
+also includes the local `subscriptions.json` export if one exists, plus a manifest
+with checksums. Google credentials, model keys, `.env` and logs aren't included.
+Keep your sign-in and model configuration separately, or set them up again on a
+new computer. Backups contain your personal subscription data, so keep them private.
+
+Copy a backup to another drive or your usual backed-up storage too. A copy beside
+the database helps with accidental edits, but won't help if you lose that disk.
+You can choose a new ZIP filename with `--output`, and use `--state` before
+`backup` if your database is somewhere other than the default location:
+
+```sh
+yt-playlists --state .local/playlists.sqlite3 backup --output .local/backups/youtube-playlists-before-editing.zip
+```
+
+To restore, use the path printed by the backup command in place of `BACKUP.zip`:
+
+```sh
+yt-playlists restore BACKUP.zip --to .local/restored
+```
+
+The destination folder must not already exist. Restore verifies the archive's
+checksums and database integrity before creating the folder, so you can also use
+it to check that a backup is usable. It leaves your current database alone. To
+use the restored copy, stop the existing web server and start it with:
+
+```sh
+yt-playlists --state .local/restored/playlists.sqlite3 web
+```
+
+Refresh the browser after restarting. If you're restoring an older backup after
+updating YouTube playlists, reconcile the managed playlists before resuming
+updates: restoring local data doesn't undo changes on YouTube. Backup and restore
+themselves make no YouTube or model requests.
 
 ## Runtime diagnostics
 

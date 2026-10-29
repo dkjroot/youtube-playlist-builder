@@ -207,6 +207,9 @@ def snapshot(args):
             topics=topics,
             channels=channels,
             frequencies=FREQUENCIES,
+            voice_matches=[dict(row) for row in state.db.execute(
+                "SELECT phrase,topic_id,uses FROM voice_matches"
+            )],
             settings={
                 key: state.meta(key, default)
                 for key, default in [

@@ -280,10 +280,56 @@ normal settings endpoint/CLI (`--single-topic-channels on|off`).
 
 
 `organiser-voice.js` owns optional browser SpeechRecognition sessions, using right
-Control or right Command as push-to-talk. Release stops audio and opens a native
-modal with an editable transcript and local partial/fuzzy topic matches. A click
+Control or right Command as push-to-talk. Keydown opens the native modal immediately
+and starts recognition; release stops audio. The empty text box shows up to ten
+local suggestions ranked from the selected channel's cached title/description
+against existing topic names/descriptions. Names and title evidence get stronger
+weights, generic words are ignored, and meaningful prefixes support photo/photography.
+Speaking or typing searches all topic names using the existing partial/fuzzy
+matcher; clearing the text restores channel suggestions. No new requests or model
+calls are needed. Suggestions stay clickable during recognition, including silent
+taps. A backdrop click must start and end outside the dialog bounds to dismiss;
+clicks on padding and text-selection drags do not dismiss it. A click
 calls the normal assignment route; recognition alone never writes. Sessions bind
 to the selected channel, invalidate late callbacks on cancellation/typing/selection,
-and abort on blur, hidden page, Escape or a 20-second listening limit. A bounded
+and abort on blur, hidden page, Escape, backdrop dismissal or a 20-second listening limit. A bounded
 final-result wait keeps typing usable even if the browser service stalls. Browser
-speech may be remote; no audio/transcript is persisted or sent to the local API.
+speech may be remote; audio is never stored or sent to the local API. When a
+voice-driven selection is confirmed, its original non-empty recognised phrase is
+sent as optional `voice_phrase` through the assignment route. Server-normalised
+phrases and topic-ID usage counts live in `voice_matches` (FK cascade on topic
+deletion). Learning commits in the same transaction as the assignment/move, with
+no learning if the assignment fails. Already-assigned selections can still teach.
+Snapshot exposes these matches; exact normalised learned phrases boost topic
+suggestions without hiding ordinary results. Rename preserves topic identity;
+repeated choices rank higher. Editing keeps the original recognised phrase;
+text-only choices and blank/whitespace/punctuation-only recognitions never teach.
+Raw speech also retains channel suggestions so a misheard word can still be
+resolved by a click. Full-database backups include the learned matches.
+
+
+## Data backups
+
+`backup.py` snapshots an existing database through SQLite's online backup API on
+a read-only source connection, without State migrations, schedule initialisation,
+authentication or the application's long-running updater lock. SQLite supplies a
+consistent committed snapshot, including WAL contents, while UI changes continue.
+It preserves every table, including pending remote intent, account identity and
+quota history. The sibling subscription export is copied separately if present;
+it can be older than the database cache, as during normal operation.
+
+Backups are private timestamped ZIPs with a versioned manifest, SHA256 hashes,
+byte sizes and membership counts. Only the database and optional subscription
+export are included; credentials, model config and logs are excluded. A private
+temporary archive is flushed/fsynced before no-overwrite publication. Restore
+allows only the expected filenames, rejects duplicates/unexpected paths, bounds
+file sizes, verifies hashes and SQLite integrity/foreign keys, then checks topic
+counts. It stages in a private temporary folder and creates a new exclusive
+owner-only destination. It never replaces an active database. Older restored
+playlist state needs reconciliation because remote writes cannot be rolled back
+by a local restore. CLI commands run before ordinary State/sync initialisation.
+
+`tests/test_backup.py` covers full-table round trips, private permissions, pending
+intent/settings/quota preservation, WAL commits versus uncommitted writes,
+optional exports, timestamped destinations, overwrite/symlink refusal, checksum/
+manifest/archive failures, invalid source databases and offline CLI dispatch.

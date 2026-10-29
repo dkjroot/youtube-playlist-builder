@@ -202,12 +202,13 @@ class WebTests(unittest.TestCase):
             self.assertEqual(
                 self.api(
                     "/api/assignment",
-                    {"channel_id": A, "topic": "support", "assigned": True},
+                    {"channel_id": A, "topic": "support", "assigned": True, "voice_phrase": "since"},
                 )[0],
                 200,
             )
             data = json.loads(self.api("/api/state")[1])
             topic = data["topics"][0]
+            self.assertEqual(data["voice_matches"], [{"phrase": "since", "topic_id": topic["id"], "uses": 1}])
             self.assertEqual(set(topic["channels"]), {A, B})
             self.assertEqual(topic["channel_limits"], {A: 4, B: 4})
             self.assertFalse(topic["enabled"])

@@ -1,6 +1,7 @@
 """Channel-first organisation with local assignments and quota-free public feeds."""
 
 import re
+import unicodedata
 from .state import State
 from .topics import edit_topic
 
@@ -40,7 +41,9 @@ def assign_channel(args, body):
     Standard topic validation also maintains firm capacities and refuses uncertain
     pending writes. Optional single-topic mode removes all other memberships,
     including existing overlaps. All changes share a database transaction.
-    Disabled topics are useful as organisation-only categories.
+    A chosen non-empty voice phrase is learned in the same transaction, keyed to
+    topic identity. Empty recognitions never teach. Disabled topics remain useful
+    as organisation-only categories.
     """
     cid, name, assigned = (
         body.get("channel_id"),
@@ -51,6 +54,12 @@ def assign_channel(args, body):
         raise ValueError("Choose a valid channel.")
     if not isinstance(name, str) or type(assigned) is not bool:
         raise ValueError("Choose a topic and whether to include the channel.")
+    phrase = body.get("voice_phrase", "")
+    if not isinstance(phrase, str) or len(phrase) > 120 or (phrase and not assigned):
+        raise ValueError("Use a voice phrase of at most 120 characters with an assignment.")
+    phrase = unicodedata.normalize("NFKD", phrase).lower()
+    phrase = "".join(c for c in phrase if not unicodedata.combining(c))
+    phrase = " ".join("".join(c if c.isalnum() else " " for c in phrase).split())
     state = State(args.state)
     try:
         with state.locked():
@@ -66,18 +75,26 @@ def assign_channel(args, body):
                 if assigned and state.meta("single_topic_channels", False)
                 else []
             )
-            if (cid in topic["channels"]) == assigned and not move_from:
+            changed = (cid in topic["channels"]) != assigned or bool(move_from)
+            if not changed and not phrase:
                 return
             # Both sides commit together. Pending writes or validation failures
             # in either topic leave the original membership/allocations intact.
             with state.db:
-                edit_topic(state, topic, {"channels": sorted(channels)}, commit=False)
+                if changed:
+                    edit_topic(state, topic, {"channels": sorted(channels)}, commit=False)
                 for source in move_from:
                     edit_topic(
                         state,
                         source,
                         {"channels": [c for c in source["channels"] if c != cid]},
                         commit=False,
+                    )
+                if phrase:
+                    state.db.execute(
+                        "INSERT INTO voice_matches(phrase,topic_id,uses) VALUES (?,?,1) "
+                        "ON CONFLICT(phrase,topic_id) DO UPDATE SET uses=uses+1",
+                        (phrase, topic["id"]),
                     )
     finally:
         state.close()

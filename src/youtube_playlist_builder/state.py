@@ -50,6 +50,12 @@ class State:
                 last_error TEXT,
                 reconciled_at TEXT
             );
+            CREATE TABLE IF NOT EXISTS voice_matches (
+                phrase TEXT NOT NULL,
+                topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+                uses INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY(phrase, topic_id)
+            );
             CREATE TABLE IF NOT EXISTS items (
                 topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
                 item_id TEXT NOT NULL,

@@ -26,3 +26,6 @@ llm.json
 # Runtime diagnostics, including rotated backups.
 *.log
 *.log.*
+
+# Personal restorable data archives, including custom output locations.
+youtube-playlists-*.zip

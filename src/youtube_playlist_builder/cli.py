@@ -45,6 +45,11 @@ def parser() -> argparse.ArgumentParser:
     web = commands.add_parser('web', help='Open local browser management at 127.0.0.1.')
     web.add_argument('--port', type=positive, default=8765)
     web.add_argument('--no-browser', action='store_true')
+    backup = commands.add_parser('backup', help='Save a consistent, restorable local data backup; no sign-in needed.')
+    backup.add_argument('--output', type=Path, help='New ZIP filename; default: timestamped file in the state folder/backups/.')
+    restore = commands.add_parser('restore', help='Verify a backup and restore into a new folder without overwriting live data.')
+    restore.add_argument('archive', type=Path)
+    restore.add_argument('--to', type=Path, required=True, help='New destination folder (must not already exist).')
     commands.add_parser('menu', help='Open the interactive menu (also the default in a terminal).')
     auth = commands.add_parser("auth", help="Sign in with Google.")
     auth.add_argument("--write-access", action="store_true", help="Also request permission to manage playlists.")
@@ -368,6 +373,23 @@ def main(argv=None) -> int:
             return run_menu(args, main)
         if args.state.resolve() in {args.token.resolve(), args.client_secrets.resolve()}:
             raise ValueError('The topic database must not use the credentials or token path.')
+        if args.command == 'backup':
+            from .backup import create_backup
+            path, manifest = create_backup(args.state, args.output)
+            counts = manifest['counts']
+            print(f"Backup saved to {path.resolve()}.")
+            print(f"{counts['topics']} topics, {counts['assigned_channels']} assigned channels, {counts['memberships']} memberships.")
+            print('Includes local settings and playlist state; excludes sign-in credentials and model keys.')
+            print('Copy this ZIP to another drive or your usual backed-up storage for protection against disk loss.')
+            return 0
+        if args.command == 'restore':
+            from .backup import restore_backup
+            path, manifest = restore_backup(args.archive, args.to)
+            print(f"Backup verified and restored to {path.resolve()}.")
+            print('Your current database has not been replaced. Stop the web server before switching to the restored database.')
+            print(f'Restored database: {(path / "playlists.sqlite3").resolve()}')
+            print('Restore does not undo YouTube changes. Reconcile managed playlists before resuming updates from an older backup.')
+            return 0
         if args.command in ('topics', 'status', 'settings', 'channels', 'suggest-topics', 'auto', 'update', 'reconcile', 'redistribute'):
             state = State(args.state)
             try:
