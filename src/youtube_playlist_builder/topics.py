@@ -145,8 +145,14 @@ def validate(name, fields):
             raise ValueError('Title filters cannot be empty.')
 
 
-def edit_topic(state, topic, fields):
-    """Save validated changes, refuse unresolved writes and recalculate or invalidate due times."""
+def edit_topic(state, topic, fields, *, commit=True):
+    """Validate and save edits; channel-only moves may join a caller's transaction.
+
+    commit=False is restricted to channel lists so schedule metadata cannot commit
+    independently. The caller must own the state lock and database transaction.
+    """
+    if not commit and set(fields) != {'channels'}:
+        raise ValueError('Only channel membership edits can share a transaction.')
     prepare_limits(topic, fields)
     if 'channel_max_age_days' in fields and fields['channel_max_age_days'].keys() - set(fields.get('channels', topic['channels'])):
         raise ValueError('Set age overrides only for selected channels.')
@@ -165,7 +171,10 @@ def edit_topic(state, topic, fields):
         fields['next_due'] = staggered_due(state, dict(topic, **fields), parse_time(topic['last_success'])).isoformat()
     if any(key in fields for key in ('max_videos', 'channel_limits', 'channel_max_age_days', 'description', 'channels', 'channel_priorities', 'include_words', 'exclude_words', 'max_age_days', 'playlist_name')):
         fields['next_due'] = None
-    state.update(topic['id'], **fields)
+    if commit:
+        state.update(topic['id'], **fields)
+    else:
+        state._update(topic['id'], fields)
 
 
 def describe(topic):

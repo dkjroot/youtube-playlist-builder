@@ -281,6 +281,61 @@ page, one video-details request and one model batch. Filters can still force a
 deeper scan when few videos match. Unlimited topics continue scanning the whole
 configured age window.
 
+### Organising your subscriptions
+
+Choose **Organise channels** at the top of the web interface to work through your
+subscriptions channel by channel. Search by name or description, then select a
+channel to read its description and see up to five recent saved videos. Video
+titles link to YouTube, and thumbnails can help you recognise the channel. There
+is also a link to the channel itself when you want a closer look.
+
+Tick topics to add the channel to them, or untick them to remove it. Each change
+saves immediately, with a confirmation at the top. Channels can belong to more
+than one topic. **Hide categorised channels** hides anything already assigned,
+including channels in paused topics, so you can work through what's left. Click
+a topic on the left to browse its channels instead.
+
+If you usually want each channel in just one topic, enable **One topic per
+channel** beside the Topics heading above the channel’s topic choices. Choosing a new topic then unticks its previous
+topic and saves the move in one go. The preference is remembered and is off by
+default. Turning it on doesn't rearrange existing assignments. Channels already
+in multiple topics stay under manual control until you untick the extras. This
+mode applies to the organiser; the main editor and CLI still let you manage
+memberships explicitly. You can also change the preference from the command line:
+
+```sh
+yt-playlists settings --single-topic-channels on
+```
+
+Use `off` to restore independent checkboxes. Moves use the usual allocation rules:
+removing a channel removes its slots, and adding it to a capped topic gives it an
+average-sized share. Playlist contents change on their next update.
+
+You can create topics on this page too. Automatic updates are off by default,
+which makes a topic useful for channels you want to keep organised without
+building a playlist. For example, a “support only” topic can hold channels you
+follow but don't usually watch. Use the main playlist manager to enable a topic
+or change its frequency, video limits and other settings later. The existing
+channel picker on that page still works as before.
+
+Selecting a channel automatically reads its public YouTube feed when the saved
+feed is missing or more than 24 hours old. It shows up to five recent videos,
+with the description above them and the topic choices below. **Fetch recent
+videos** refreshes immediately if you want to check again. Only channels you
+select are fetched; it doesn't scan all your subscriptions in the background.
+There is no quota saving from asking for one or two videos instead of five, so
+there isn't a separate count setting.
+
+Public feeds and thumbnail images use no YouTube Data API or model quota and
+need no extra sign-in. They do need an internet connection, may include Shorts
+or live videos, and can occasionally be unavailable or incomplete. A failed
+fetch keeps existing saved videos; you can still open the channel directly on
+YouTube. The page shows when the feed was last fetched. Normal updates also
+contribute saved video details. Playlist updates still use the API: the public
+feed's short history cannot reliably cover long age windows or confirm video
+availability and duration. Local categorisation changes take effect on playlists
+when you next run an update.
+
 ### Quota forecasts and schedule redistribution
 
 The web interface offers two local forecast views:

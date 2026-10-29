@@ -1,0 +1,28 @@
+/* A channel-first workspace; its lists scroll independently on larger screens. */
+.organiser-layout { display:grid; grid-template-columns:230px minmax(230px,1fr) minmax(350px,1.8fr); gap:18px; align-items:start; }
+#topic-filters, #channels, #memberships { display:grid; gap:7px; }
+#topic-filters { margin-bottom:24px; }
+#topic-filters button, #channels button { text-align:left; width:100%; }
+#topic-filters .selected, #channels .selected { border-color:#81cfa7; background:#284436; }
+#channels small { display:block; color:var(--muted); margin-top:5px; }
+.channel-browser { max-height:65vh; overflow-y:auto; }
+.hide-assigned { margin-top:14px; }
+#detail h2 { margin-bottom:8px; }
+.channel-description { white-space:pre-wrap; overflow-wrap:anywhere; max-height:260px; overflow-y:auto; }
+#memberships label { display:flex; align-items:center; gap:9px; background:#1d3026; padding:10px; border-radius:6px; }
+#memberships input, #new-topic input[type=checkbox], .hide-assigned input { width:auto; }
+#memberships small { margin-left:auto; color:var(--muted); }
+.video-card { display:flex; gap:12px; margin:16px 0; align-items:start; }
+.video-card img { width:144px; border-radius:6px; }
+.video-card small { display:block; margin-top:5px; color:var(--muted); }
+#new-topic label { margin:12px 0; }
+@media(max-width:1050px) { .organiser-layout { grid-template-columns:190px 1fr; } .channel-detail { grid-column:1/-1; } }
+@media(max-width:620px) { .organiser-layout { display:block; } .organiser-layout>.panel { margin-bottom:16px; } .channel-browser { max-height:40vh; } }
+.hide-assigned { display:flex; align-items:center; gap:8px; }
+.hide-assigned input { margin:0; }
+
+/* Keep the assignment preference beside the choices it changes. */
+.assignment-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:20px 0 12px; }
+.assignment-heading h3 { margin:0; }
+#single-topic-option { display:flex; align-items:center; gap:8px; margin:0; font-size:13px; }
+#single-topic-option input { width:auto; margin:0; }

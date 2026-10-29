@@ -20,6 +20,7 @@ import uuid
 import webbrowser
 from zoneinfo import ZoneInfo
 
+from .organiser import channel_detail, assign_channel, fetch_channel_videos
 from .limits import prepare_limits
 from .forecast import project, planning_days
 from .rebalance import redistribute
@@ -210,6 +211,7 @@ def snapshot(args):
                 key: state.meta(key, default)
                 for key, default in [
                     ("daily_budget", 9500),
+                    ("single_topic_channels", False),
                     ("timezone", "UTC"),
                     ("mode", "text"),
                     ("minimum_video_seconds", 0),
@@ -324,7 +326,7 @@ def make_server(args, port, *, session_token=None):
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header(
                 "Content-Security-Policy",
-                "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'",
+                "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https://i.ytimg.com; frame-ancestors 'none'; base-uri 'none'",
             )
             self.end_headers()
             self.wfile.write(data)
@@ -342,14 +344,21 @@ def make_server(args, port, *, session_token=None):
             )
 
         def do_GET(self):
-            """Read local state/jobs or serve one of three packaged static assets."""
+            """Read local state/jobs or serve packaged management assets."""
             path = urlsplit(self.path).path
             if self.headers.get("Host") != f"127.0.0.1:{self.server.server_port}":
                 return self.reply(403, {"error": "Use the printed loopback URL."})
-            if path == "/":
-                page = (ASSETS / "index.html").read_text().replace("__TOKEN__", token)
+            if path in ("/", "/organiser"):
+                page = (
+                    (
+                        ASSETS
+                        / ("organiser.html" if path == "/organiser" else "index.html")
+                    )
+                    .read_text()
+                    .replace("__TOKEN__", token)
+                )
                 return self.reply(200, page.encode(), "text/html")
-            if path in ("/app.js", "/app.css"):
+            if path in ("/app.js", "/app.css", "/organiser.js", "/organiser.css"):
                 return self.reply(
                     200,
                     (ASSETS / path[1:]).read_bytes(),
@@ -360,6 +369,9 @@ def make_server(args, port, *, session_token=None):
             try:
                 if path == "/api/state":
                     return self.reply(200, snapshot(args))
+                if path == "/api/channel":
+                    cid = parse_qs(urlsplit(self.path).query).get("id", [""])[0]
+                    return self.reply(200, channel_detail(args, cid))
                 if path == "/api/forecast":
                     rate = float(
                         parse_qs(urlsplit(self.path).query).get("rate", ["1"])[0]
@@ -414,6 +426,18 @@ def make_server(args, port, *, session_token=None):
                 if not isinstance(body, dict):
                     raise ValueError("Use a JSON object.")
                 path = urlsplit(self.path).path
+                if path == "/api/channel-fetch":
+                    return self.reply(
+                        200,
+                        fetch_channel_videos(
+                            args,
+                            body.get("channel_id"),
+                            refresh=body.get("refresh", False),
+                        ),
+                    )
+                if path == "/api/assignment":
+                    assign_channel(args, body)
+                    return self.reply(200, {"ok": True})
                 if path == "/api/topic":
                     save_topic(args, body)
                     return self.reply(200, {"ok": True})
@@ -433,6 +457,7 @@ def make_server(args, port, *, session_token=None):
                     return self.reply(200, result)
                 if path == "/api/settings":
                     flags = {
+                        "single_topic_channels": "--single-topic-channels",
                         "daily_budget": "--daily-budget",
                         "timezone": "--timezone",
                         "mode": "--mode",
@@ -443,6 +468,12 @@ def make_server(args, port, *, session_token=None):
                         raise ValueError("Unknown setting.")
                     words = ["settings"]
                     for key, value in body.items():
+                        if key == "single_topic_channels":
+                            if type(value) is not bool:
+                                raise ValueError(
+                                    "One topic per channel must be true or false."
+                                )
+                            value = "on" if value else "off"
                         words += [flags[key], str(value)]
                     result = subprocess.run(
                         jobs.base() + words, capture_output=True, text=True

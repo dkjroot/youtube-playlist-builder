@@ -58,6 +58,14 @@ class State:
                 title TEXT NOT NULL DEFAULT '',
                 PRIMARY KEY(topic_id, item_id)
             );
+            CREATE TABLE IF NOT EXISTS channel_videos (
+                video_id TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                published_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS channel_videos_channel ON channel_videos(channel_id, published_at);
             CREATE TABLE IF NOT EXISTS pending (
                 topic_id INTEGER PRIMARY KEY REFERENCES topics(id) ON DELETE CASCADE,
                 kind TEXT NOT NULL,
@@ -110,6 +118,24 @@ class State:
                 yield self
             finally:
                 fcntl.flock(handle, fcntl.LOCK_UN)
+
+    def remember_channel_videos(self, videos):
+        """Keep five newest observed uploads per channel for offline organisation.
+
+        Sync has already paid for these details. This cache is deliberately not
+        used to decide fresh playlist contents or whether videos remain available.
+        """
+        videos = list(videos)
+        with self.db:
+            self.db.executemany(
+                "INSERT OR REPLACE INTO channel_videos VALUES (?,?,?,?,?)",
+                [(v['video_id'], v['channel_id'], v['title'], v.get('description', ''),
+                  v['published_at']) for v in videos])
+            for cid in {v['channel_id'] for v in videos}:
+                self.db.execute(
+                    "DELETE FROM channel_videos WHERE channel_id=? AND video_id NOT IN "
+                    "(SELECT video_id FROM channel_videos WHERE channel_id=? ORDER BY published_at DESC, video_id DESC LIMIT 5)",
+                    (cid, cid))
 
     def meta(self, key, default=None):
         """Read a JSON setting/cache value, falling back only when no row exists."""

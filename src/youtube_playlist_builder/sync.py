@@ -112,7 +112,9 @@ class Sync:
                                           published_at=snippet['publishedAt'], channel_id=snippet['channelId'],
                                           description=snippet.get('description', ''),
                                           duration_seconds=duration_seconds(item.get('contentDetails', {}).get('duration')))
-        return {key: self.video_details[key] for key in requested if self.video_details.get(key)}
+        known = {key: self.video_details[key] for key in requested if self.video_details.get(key)}
+        self.state.remember_channel_videos(known.values())
+        return known
 
     def resolve_uploads(self, channel_ids, *, refresh=False):
         """Resolve stable upload-playlist addresses without caching their video contents.

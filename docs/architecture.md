@@ -237,3 +237,43 @@ real deferred updates can merge, expire, or require fresh discovery, so queued
 work may be overstated. The UI exposes this limitation and the matching-upload
 rate assumption. The web endpoint defaults to budget view; the planner's default
 remains demand so scheduling optimisation cannot hide overload by clipping bars.
+
+
+## Channel-first organisation
+
+The separate `/organiser` page uses the same protected local state API, with
+`/api/channel` providing up to five newest known videos for one channel and
+`/api/assignment` changing a single membership. Membership writes acquire the
+state lock, read the latest topic and call `edit_topic`, preserving unrelated
+settings, existing capacity policy and pending-write protection. There is no
+client-side full-topic overwrite during assignment. Paused topics count as
+categories and new organiser topics default to paused.
+
+`channel_videos` is a bounded per-channel display cache. Normal sync details
+requests persist the five newest observed videos, including title, description
+and publication date. This adds no YouTube requests and is never used as fresh
+sync discovery. The detail endpoint merges the cache with attributed playlist
+entries; incomplete history is labelled in the UI. Video thumbnails use validated
+video IDs and the fixed YouTube image CDN, allowed explicitly by CSP. No remote
+URLs from channel descriptions become executable markup or image sources.
+
+
+The organiser now refreshes the selected channel's public Atom feed when absent
+or at least24hours old, with a manual refresh button bypassing that cache. The
+protected POST /api/channel-fetch route uses only a fixed YouTube feed URL, no
+credentials, bounded2MB reads,15second network timeouts, no redirects or DTDs.
+It validates channel/video IDs, stores five newest entries and a fetch timestamp,
+and preserves prior history on failure. The browser backs off failed automatic
+attempts for5minutes and never bulk-fetches subscriptions. No API fallback spends
+quota silently. Videos appear before topic choices. Actual playlist sync remains
+API-based because short feed history lacks reliable duration/availability and
+cannot safely stand in for complete older discovery or reconciliation.
+
+
+Optional `single_topic_channels` preference (default false) controls only organiser
+assignment. On a new checked assignment with exactly one previous membership, the
+old membership is removed in the same database transaction as the new assignment.
+`edit_topic(commit=False)` is restricted to channel-only edits and participates in
+the caller's transaction; validation/pending failures roll back both topics.
+Existing overlaps are left intact for manual resolution. Preferences persist via
+normal settings endpoint/CLI (`--single-topic-channels on|off`).

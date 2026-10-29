@@ -110,6 +110,8 @@ def parser() -> argparse.ArgumentParser:
     rebalance.add_argument('--rate', type=float, default=1.0, help='Assumed matching videos per channel per day.')
     commands.add_parser('status', help='Show the queue, schedules, and local daily quota usage.')
     settings = commands.add_parser('settings', help='View or set the local daily API budget (default 9500 units).')
+    settings.add_argument('--single-topic-channels', choices=('on', 'off'),
+                          help='In the web organiser, selecting a new topic moves channels that have one topic (default off).')
     settings.add_argument('--subscription-cache-hours', type=nonnegative, metavar='HOURS',
                           help='Cache subscribed channel list for up to 720 hours; 0 always refreshes (default 24).')
     settings.add_argument('--refresh-subscriptions', action='store_true',
@@ -204,6 +206,9 @@ def local_command(args, state):
                     print('No matches found. Add a topic and select its channels manually.')
         return 0
     if args.command == 'settings':
+        if args.single_topic_channels is not None:
+            state.set_meta('single_topic_channels', args.single_topic_channels == 'on')
+        print(f"One topic per channel in organiser: {'on' if state.meta('single_topic_channels', False) else 'off'}.")
         if args.subscription_cache_hours is not None:
             if args.subscription_cache_hours > 720:
                 raise ValueError('Subscription cache lifetime must be between 0 and 720 hours.')

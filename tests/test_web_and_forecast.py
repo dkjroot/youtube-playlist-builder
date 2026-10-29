@@ -177,6 +177,110 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.api("/api/forecast?days=367")[0], 400)
         self.assertEqual(json.loads(self.api("/api/state")[1])["quota"]["used"], 0)
 
+    def test_organiser_assignments_preserve_topic_settings_and_make_no_jobs(self):
+        with patch("youtube_playlist_builder.web.subprocess.Popen") as process:
+            self.assertEqual(self.request("GET", "/organiser")[0], 200)
+            self.assertEqual(self.request("GET", "/organiser.js")[0], 200)
+            self.assertEqual(self.request("GET", "/api/channel?id=" + A)[0], 403)
+            self.assertEqual(
+                self.api(
+                    "/api/topic",
+                    {
+                        "action": "add",
+                        "name": "support",
+                        "fields": {
+                            "enabled": False,
+                            "channels": [B],
+                            "max_videos": 4,
+                            "frequency": "biweekly",
+                        },
+                    },
+                )[0],
+                200,
+            )
+            self.assertEqual(
+                self.api(
+                    "/api/assignment",
+                    {"channel_id": A, "topic": "support", "assigned": True},
+                )[0],
+                200,
+            )
+            data = json.loads(self.api("/api/state")[1])
+            topic = data["topics"][0]
+            self.assertEqual(set(topic["channels"]), {A, B})
+            self.assertEqual(topic["channel_limits"], {A: 4, B: 4})
+            self.assertFalse(topic["enabled"])
+            self.assertEqual(topic["frequency"], "biweekly")
+            self.assertEqual(
+                self.api(
+                    "/api/assignment",
+                    {"channel_id": A, "topic": "support", "assigned": False},
+                )[0],
+                200,
+            )
+            self.assertEqual(self.api("/api/channel?id=invalid")[0], 400)
+            self.assertEqual(
+                self.api(
+                    "/api/assignment",
+                    {"channel_id": A, "topic": "support", "assigned": "yes"},
+                )[0],
+                400,
+            )
+            process.assert_not_called()
+            self.assertEqual(data["quota"]["used"], 0)
+
+    def test_channel_history_retains_newest_five_without_mixing_channels(self):
+        state = State(self.args.state)
+        try:
+            state.remember_channel_videos(
+                [
+                    {
+                        "video_id": str(i),
+                        "channel_id": A,
+                        "title": "Video " + str(i),
+                        "published_at": f"2026-10-{i+1:02d}T00:00:00+00:00",
+                        "description": "Description",
+                    }
+                    for i in range(9)
+                ]
+            )
+            state.remember_channel_videos(
+                [
+                    {
+                        "video_id": "other",
+                        "channel_id": B,
+                        "title": "Other",
+                        "published_at": "2026-10-29T00:00:00+00:00",
+                    }
+                ]
+            )
+        finally:
+            state.close()
+        videos = json.loads(self.api("/api/channel?id=" + A)[1])["videos"]
+        self.assertEqual([v["video_id"] for v in videos], ["8", "7", "6", "5", "4"])
+        self.assertEqual(videos[0]["description"], "Description")
+        self.assertEqual(
+            json.loads(self.api("/api/channel?id=" + B)[1])["videos"][0]["video_id"],
+            "other",
+        )
+
+    def test_feed_endpoint_requires_session_and_never_launches_cli_jobs(self):
+        with patch(
+            "youtube_playlist_builder.web.fetch_channel_videos",
+            return_value={"videos": []},
+        ) as fetch:
+            with patch("youtube_playlist_builder.web.subprocess.Popen") as process:
+                self.assertEqual(
+                    self.request("POST", "/api/channel-fetch", {"channel_id": A})[0],
+                    403,
+                )
+                fetch.assert_not_called()
+                self.assertEqual(
+                    self.api("/api/channel-fetch", {"channel_id": A})[0], 200
+                )
+                fetch.assert_called_once_with(self.args, A, refresh=False)
+                process.assert_not_called()
+
     def test_jobs_allowlist_rejects_arbitrary_command(self):
         self.assertEqual(self.api("/api/jobs", {"action": "rm -rf /"})[0], 400)
         self.assertEqual(
