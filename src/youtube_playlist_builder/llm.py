@@ -49,14 +49,14 @@ def settings(path):
     if parsed.hostname not in ('localhost', '127.0.0.1', '::1'):
         if data.get('allow_remote') is not True or parsed.scheme != 'https':
             raise ValueError('Hosted models require HTTPS and allow_remote: true in the LLM configuration.')
-    limit = data.get('max_calls', 20)
-    daily = data.get('max_daily_calls', 100)
-    if type(daily) is not int or not 1 <= daily <= 10000:
-        raise ValueError('Use max_daily_calls between 1 and 10000.')
+    limit = data.get('max_calls', 0)
+    daily = data.get('max_daily_calls', 0)
+    if type(daily) is not int or not 0 <= daily <= 10000:
+        raise ValueError('Use max_daily_calls between 0 and 10000 (0 disables the local limit).')
     tokens = data.get('max_tokens', 4096)
     timeout = data.get('timeout', 120)
-    if type(limit) is not int or not 1 <= limit <= 1000 or type(tokens) is not int or not 256 <= tokens <= 16384:
-        raise ValueError('Use max_calls between 1 and 1000 and max_tokens between 256 and 16384.')
+    if type(limit) is not int or not 0 <= limit <= 1000 or type(tokens) is not int or not 256 <= tokens <= 16384:
+        raise ValueError('Use max_calls between 0 and 1000 (0 disables the local limit) and max_tokens between 256 and 16384.')
     if type(timeout) not in (int, float) or not 1 <= timeout <= 300:
         raise ValueError('Use an LLM timeout between 1 and 300 seconds.')
     if data.get('reply_encoding', 'text') not in ('text', 'html', 'double-html'):
@@ -85,6 +85,8 @@ class Classifier:
         self.owns_client = client is None
         self.engine = ChatEngine(config, self.client)
         self.calls = 0
+        logger.info('LLM local limits per_run=%s per_UTC_day=%s (independent of YouTube units)',
+                    config.max_calls or 'unlimited', config.max_daily_calls or 'unlimited')
 
     def close(self):
         """Close only a transport created here; injected clients remain owned by their caller."""
@@ -99,16 +101,19 @@ class Classifier:
 
     def ask(self, instruction, payload):
         """Charge one model call before dispatch and require JSON without paid automatic retries."""
-        if self.calls >= self.config.max_calls:
+        if self.config.max_calls and self.calls >= self.config.max_calls:
+            logger.warning('Local LLM run cap reached used=%s limit=%s (not YouTube quota)', self.calls, self.config.max_calls)
             raise QuotaStop('LLM call limit reached. Completed results are cached; run again to continue.')
         day_key = 'llm_calls:' + datetime.now(timezone.utc).date().isoformat()
         used = self.state.meta(day_key, 0)
-        if used >= self.config.max_daily_calls:
+        if self.config.max_daily_calls and used >= self.config.max_daily_calls:
+            logger.warning('Local LLM UTC-day cap reached used=%s limit=%s (not YouTube quota)', used, self.config.max_daily_calls)
             raise QuotaStop('Local daily LLM call limit reached. Try again after midnight UTC.')
         self.state.set_meta(day_key, used + 1)  # Failed/uncertain requests may still be billed.
         self.calls += 1
         try:
-            with waiting(f'Waiting for model response (request {self.calls}/{self.config.max_calls})…'):
+            counter = f'{self.calls}/{self.config.max_calls}' if self.config.max_calls else str(self.calls)
+            with waiting(f'Waiting for model response (request {counter})…'):
                 text = self.engine.get_response(instruction + '\nDATA:\n' + json.dumps(payload, ensure_ascii=False))
             return json.loads(text)
         except ChatError as error:

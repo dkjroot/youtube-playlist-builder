@@ -333,3 +333,33 @@ by a local restore. CLI commands run before ordinary State/sync initialisation.
 intent/settings/quota preservation, WAL commits versus uncommitted writes,
 optional exports, timestamped destinations, overwrite/symlink refusal, checksum/
 manifest/archive failures, invalid source databases and offline CLI dispatch.
+
+
+## API and model failure handling
+
+`api.error_reasons` accepts legacy `error.errors[].reason` plus Google RPC
+`error.details[].reason` and top-level reason/status fields, ignoring malformed
+entries. Explicit quota/daily exhaustion reasons (including underscore-style
+QUOTA_EXCEEDED) persist the exhausted-day flag; 429, rate-limit reasons and generic
+RESOURCE_EXHAUSTED pause without falsely identifying daily exhaustion. All managed
+endpoint calls share this gateway. Increasing local budgets never bypasses a
+confirmed exhausted-day flag.
+
+ApiFailure marks HTTP408/5xx and service-unavailable/backend/internal reasons as
+uncertain, including the observed HTTP409 SERVICE_UNAVAILABLE. Sync preserves
+pending intent and stops the entire run for uncertain service errors or transport
+failures, reconciling before subsequent writes. Definite client rejection clears
+pending intent and fails that topic without retrying it within the run. Normal
+multi-topic rotation retains generators after successful writes only. Deletion
+progress now includes the per-plan count so distinct deletions are visible.
+
+Private runtime logging covers every managed API dispatch/outcome with resource,
+method, charged usage, elapsed time, HTTP status and sanitised structured reasons;
+no request parameters, IDs or raw bodies. Sync logs pause/failure reasons. The
+installed Google API client already creates its HTTP transport with a60-second
+socket timeout; this is not a hard wall-clock deadline across all connection/auth
+stages. No live API calls were needed to audit it.
+
+LLM run/day limits now default to0 (disabled), with optional positive caps retained
+and daily accounting/cache behaviour unchanged. Existing explicit config values
+still apply until edited. These limits are independent of YouTube API units.

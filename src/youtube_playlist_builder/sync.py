@@ -15,6 +15,7 @@ from .limits import channel_age_days
 from .videos import duration_seconds
 from .channel_order import addition_turns
 from .terminal import progress
+from .diagnostics import logger, safe_text
 from .api import ApiFailure, ConnectionFailure, QuotaStop
 from .schedule import staggered_due, initialise_staggering, due_topics, parse_time, playlist_title, utcnow
 
@@ -291,7 +292,7 @@ class Sync:
                 self.state.clear_pending(topic['id'])
             raise
         except ApiFailure as error:
-            if error.status < 500 and error.status != 408:
+            if not error.uncertain:
                 # A definite rejection hasn't applied the operation. Unknown
                 # transport/server outcomes deliberately keep the recovery record.
                 with self.state.db:
@@ -448,13 +449,13 @@ class Sync:
         # are drained per turn. Alternating cleanup keeps either backlog from
         # blocking the other, and removals never consume a channel insertion slot.
         if topic.get('max_videos') is not None:
-            for item in remove:
-                progress(f"Freeing a slot in {topic['name']}…")
+            for index, item in enumerate(remove, 1):
+                progress(f"Freeing slot {index}/{len(remove)} in {topic['name']}…")
                 self.remove_item(topic, item)
                 yield record_step()
             remove = []
         turns = addition_turns(topic, add)
-        for turn, item in zip_longest(turns, remove):
+        for index, (turn, item) in enumerate(zip_longest(turns, remove), 1):
             if turn is not None:
                 video, rotation = turn
                 # A long-running round must not insert a video that aged out while waiting.
@@ -475,7 +476,7 @@ class Sync:
                 else:
                     record_step()
             if item is not None:
-                progress(f"Removing a video from {topic['name']}…")
+                progress(f"Removing video {index}/{len(remove)} from {topic['name']}…")
                 self.remove_item(topic, item)
                 yield record_step()
         if not completed:
@@ -551,14 +552,16 @@ class Sync:
             except QuotaStop as error:
                 if not preview:
                     self.state.update(topic_id, last_error=str(error))
+                logger.warning("Run paused topic=%s reason=%s", safe_text(topic["name"]), safe_text(error))
                 self.report(f"Paused at {topic['name']}: {error}")
                 return 2
             except (ApiFailure, ConnectionFailure, ValueError) as error:
                 failed = True
+                logger.warning("Topic failed topic=%s reason=%s", safe_text(topic["name"]), safe_text(error))
                 if not preview:
                     self.state.update(topic_id, last_error=str(error))
                 self.report(f"Could not update {topic['name']}: {error}")
-                if isinstance(error, ConnectionFailure):
+                if isinstance(error, ConnectionFailure) or (isinstance(error, ApiFailure) and error.stop_run):
                     return 1
         self.report(f"API units used this run: {self.api.spent}.")
         return 1 if failed else 0

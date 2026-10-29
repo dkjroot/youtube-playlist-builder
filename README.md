@@ -767,8 +767,8 @@ edit it for your server or account. For a local server, start with:
 {
   "base_url": "http://127.0.0.1:5001/v1",
   "model": "local-model",
-  "max_calls": 20,
-  "max_daily_calls": 100,
+  "max_calls": 0,
+  "max_daily_calls": 0,
   "max_tokens": 4096
 }
 ```
@@ -785,8 +785,8 @@ a compatible model available to your account:
   "model": "YOUR_MODEL_ID",
   "allow_remote": true,
   "api_key_env": "GEMINI_API_KEY",
-  "max_calls": 20,
-  "max_daily_calls": 100,
+  "max_calls": 0,
+  "max_daily_calls": 0,
   "max_tokens": 4096
 }
 ```
@@ -832,12 +832,19 @@ metadata, the topic name and description, endpoint, model, output limit and prom
 version. Changing those inputs causes a fresh classification. Changing a model
 behind the same server model name won't invalidate the cache automatically.
 
-The defaults allow at most 20 model requests per command and 100 per UTC day,
-shared across commands using the same database. Failed requests count too, because
-the provider may have billed them. There are no automatic model retries. When a
-limit is reached, run again later; completed batches remain cached. These are
-request limits, not a guaranteed pound amount: model prices and token usage vary.
-Use the provider's own spending controls as well.
+Model calls don't have a local cap by default. Set `max_calls` to a positive
+number for a per-command cap, or `max_daily_calls` for a UTC-day cap shared across
+commands using the same database. Zero disables either cap. Older configurations
+may still contain the previous defaults of 20 and 100; change both to zero if you
+don't want them. Calls are counted even without caps, including failed requests
+because the provider may have billed them. Successful decisions remain cached,
+and there are no automatic model retries.
+
+These settings are separate from the YouTube API budget: increasing a 10,000-unit
+YouTube budget doesn't increase the number of model requests allowed by a positive
+LLM cap, and disabling local caps doesn't remove the model provider's own limits.
+If you enable a cap, it limits requests rather than a guaranteed pound amount:
+model prices and token usage vary. Provider spending controls still apply.
 
 Hosted models receive the titles, descriptions, IDs and topic definitions needed
 for classification. They never receive your YouTube login token. If a model fails
@@ -913,6 +920,20 @@ tokens. Known key values and common credential patterns are redacted from provid
 errors. Provider messages can still contain context echoed by the server, so
 review a log before sharing it. Logs are owner-readable/writable, rotate at about
 1 MB, and keep three backups. The default location is ignored by Git.
+
+Managed YouTube calls also record the resource and method, charged units,
+elapsed time, and success, HTTP error reason or connection failure. Request
+parameters, playlist-item IDs and response bodies aren't logged. Run pauses and
+topic failures are logged too, so a quota pause, model cap and service failure
+can be distinguished. Removal progress includes a count within that playlist's
+plan, rather than repeating an identical line for every video.
+
+A confirmed YouTube daily-quota rejection stops the whole run and blocks further
+calls for that Pacific day, even if you raise the local budget. Temporary rate
+limits pause without marking the daily quota exhausted. Service failures and
+connection timeouts stop the run; uncertain writes remain pending and are
+reconciled before a later retry. No automatic write retry is added. Other definite
+request errors fail that topic, with later topics still eligible for a turn.
 
 For Gemini, a missing key is caught before contacting the model. Environment
 variables belong to the terminal that sets them: if you open a new terminal,

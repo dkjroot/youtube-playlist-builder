@@ -93,6 +93,26 @@ class LLMTests(unittest.TestCase):
             restarted.match(changed, self.videos)
         self.assertEqual(len(self.requests), 1)
 
+    def test_zero_and_default_limits_allow_calls_but_keep_accounting(self):
+        from datetime import datetime, timezone
+        self.path.write_text(json.dumps({'base_url':'http://localhost:5001/v1', 'model':'test'}))
+        config = settings(self.path)
+        self.assertEqual((config.max_calls, config.max_daily_calls), (0, 0))
+        unlimited = Classifier(self.state, config, self.client)
+        unlimited.calls = 2000
+        key = 'llm_calls:' + datetime.now(timezone.utc).date().isoformat()
+        self.state.set_meta(key, 10000)
+        self.responses = [self.decision()]
+        unlimited.match(self.topic, self.videos)
+        self.assertEqual(unlimited.calls, 2001)
+        self.assertEqual(self.state.meta(key), 10001)
+
+    def test_invalid_call_limits_still_rejected(self):
+        for field, value in [('max_calls', -1), ('max_daily_calls', -1), ('max_calls', False)]:
+            self.path.write_text(json.dumps({'base_url':'http://localhost:5001/v1', 'model':'test', field:value}))
+            with self.assertRaises(ValueError):
+                settings(self.path)
+
     def test_invalid_decisions_are_not_cached(self):
         self.responses = [self.decision(vid='invented'), self.decision()]
         with self.assertRaises(ValueError):

@@ -354,7 +354,10 @@ async function job(action) {
     });
     running = true;
     $('job-status').textContent = 'Running…';
-    notice('Operation started. Progress appears below.');
+    notice('Operation started. ');
+    const progressLink = node('a', 'Progress appears below.');
+    progressLink.href = '#activity-panel';
+    $('notice').append(progressLink);
     polling = setInterval(poll, 700);
     await poll();
   } catch (e) {

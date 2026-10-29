@@ -531,3 +531,6 @@ header {
 #save-topic[data-status="dirty"] { background: #eea174; color: #291b10; }
 #save-topic[data-status="saved"] { background: #81cfa7; color: #10251a; }
 #save-topic[data-status="saving"] { background: #b8c6bd; color: #18221c; }
+
+/* Keep the activity heading visible below the sticky notification when linked. */
+#activity-panel { scroll-margin-top:52px; }
