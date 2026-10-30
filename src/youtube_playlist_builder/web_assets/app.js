@@ -13,6 +13,7 @@ const node = (tag, text, cls) => {
   if (cls) n.className = cls;
   return n;
 };
+const topicToggles = new Set();
 const number = id => Number($(id).value);
 const notice = (text, error = false) => {
   $('notice').textContent = text;
@@ -72,7 +73,44 @@ function listTopics() {
       : 'Next: ' + new Intl.DateTimeFormat('en-GB', {day:'numeric', month:'short', timeZone:state.settings.timezone}).format(new Date(t.next_due));
     b.append(node('small', due));
     b.onclick = () => openTopic(t);
-    box.append(b);
+    const toggle = node('button', topicToggles.has(t.name) ? 'Saving…' : t.enabled ? 'Disable' : 'Enable', 'topic-toggle');
+    toggle.type = 'button';
+    toggle.disabled = topicToggles.has(t.name);
+    toggle.setAttribute('aria-label', `${t.enabled ? 'Disable' : 'Enable'} ${t.name}`);
+    toggle.setAttribute('aria-pressed', String(!!t.enabled));
+    toggle.title = 'Save automatic update preference immediately';
+    toggle.onclick = () => toggleTopic(t);
+    const row = node('div', undefined, 'topic-row');
+    row.append(b, toggle);
+    box.append(row);
+  }
+}
+/** Save only enabled state, preserving the open form and all its unsaved edits. */
+async function toggleTopic(topic) {
+  if (topicToggles.has(topic.name)) return;
+  if (draft?.name === topic.name && $('save-topic').dataset.status === 'saving') {
+    return notice('Wait for this topic to finish saving.', true);
+  }
+  topicToggles.add(topic.name);
+  listTopics();
+  try {
+    const enabled = !topic.enabled;
+    await api('/api/topic', {action:'edit', name:topic.name, fields:{enabled}});
+    // Do not reload/openTopic: that would discard unsaved form and channel edits.
+    topic.enabled = enabled;
+    if (draft?.name === topic.name && !creating) {
+      draft.enabled = enabled;
+      $('enabled').checked = enabled;
+    }
+    state = await api('/api/state');
+    fillSummary();
+    notice(`${topic.name}: automatic updates ${enabled ? 'enabled' : 'disabled'}.`);
+    await forecast();
+  } catch (error) {
+    notice(error.message, true);
+  } finally {
+    topicToggles.delete(topic.name);
+    listTopics();
   }
 }
 /** Keep save feedback visible; failures leave the draft orange and retryable. */
@@ -310,6 +348,7 @@ async function forecast() {
 /** Validate and persist local topic settings; no playlist API operations occur here. */
 async function save(e) {
   e.preventDefault();
+  if (topicToggles.has(draft?.name)) return notice('Wait for this topic switch to finish saving.', true);
   saveStatus('saving');
   try {
     const name = $('name').value.trim();
@@ -350,7 +389,8 @@ async function job(action) {
       'Save and choose a topic first.');
     await api('/api/jobs', {
       action,
-      name: draft?.name
+      name: draft?.name,
+      forecast: {rate:number('rate'), mode:$('forecast-mode').value, days:$('forecast-days').value}
     });
     running = true;
     $('job-status').textContent = 'Running…';

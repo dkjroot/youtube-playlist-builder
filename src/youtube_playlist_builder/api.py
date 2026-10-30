@@ -31,7 +31,8 @@ class ApiFailure(Exception):
         """Keep structured status for recovery decisions and a short user-facing message."""
         self.status, self.reason = status, reason
         token = ''.join(c for c in reason.lower() if c.isalnum())
-        self.uncertain = status >= 500 or status == 408 or token in (
+        self.recoverable_conflict = status == 409
+        self.uncertain = status >= 500 or status in (408, 409) or token in (
             'serviceunavailable', 'backenderror', 'internalerror', 'internal', 'unavailable'
         )
         self.stop_run = self.uncertain or status == 401
@@ -74,6 +75,9 @@ class YouTube:
         self.daily_budget, self.run_budget = daily_budget, run_budget
         self.spent = 0
         self.now = now
+        self.topic_id = None
+        self.run_usage = {}
+        self.topic_usage = {}
 
     def day(self):
         """Use YouTube’s Pacific reset date, independently of the user’s scheduling timezone."""
@@ -110,6 +114,11 @@ class YouTube:
         day = self.day()
         self.state.charge(day, cost, resource=resource, method=method)
         self.spent += cost
+        key = resource + '.' + method
+        for counters in (self.run_usage, self.topic_usage.setdefault(str(self.topic_id) if self.topic_id is not None else 'shared', {})):
+            counter = counters.setdefault(key, {'calls': 0, 'units': 0})
+            counter['calls'] += 1
+            counter['units'] += cost
         started = time.monotonic()
         logger.info('YouTube request resource=%s method=%s cost=%s run_spent=%s daily_spent=%s',
                     resource, method, cost, self.spent, self.state.quota(day)['used'])

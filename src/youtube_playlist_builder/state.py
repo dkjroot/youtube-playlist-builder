@@ -77,6 +77,13 @@ class State:
                 kind TEXT NOT NULL,
                 payload TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS run_diagnostics (
+                run_id TEXT PRIMARY KEY,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                status TEXT NOT NULL,
+                payload TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS quota (
                 day TEXT PRIMARY KEY, used INTEGER NOT NULL DEFAULT 0,
                 exhausted INTEGER NOT NULL DEFAULT 0

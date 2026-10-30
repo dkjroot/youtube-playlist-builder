@@ -10,12 +10,14 @@ Do not remove content after a partial discovery or uncertain model response.
 from collections import deque
 from datetime import timedelta
 from itertools import zip_longest, islice
+import time
 
 from .limits import channel_age_days
 from .videos import duration_seconds
 from .channel_order import addition_turns
 from .terminal import progress
 from .diagnostics import logger, safe_text
+from .run_diagnostics import RunDiagnostics
 from .api import ApiFailure, ConnectionFailure, QuotaStop
 from .schedule import staggered_due, initialise_staggering, due_topics, parse_time, playlist_title, utcnow
 
@@ -38,6 +40,7 @@ class Sync:
         """Start a run with independent in-memory feed/metadata caches and optional classifier."""
         self.api, self.state, self.now, self.report = api, state, now, report
         self.classifier = classifier
+        self.run_monitor = None
         self.subscribed = None
         self.owner = None
         self.refresh_subscriptions = refresh_subscriptions
@@ -409,6 +412,11 @@ class Sync:
         add = [video for key, video in desired.items() if key not in seen]
         rename = bool(topic['playlist_id'] and topic['remote_title'] != playlist_title(topic))
         cost = 50 * (len(remove) + len(add) + int(not topic['playlist_id']) + int(rename))
+        if self.run_monitor:
+            try:
+                self.run_monitor.plan(topic, desired, add, remove, not topic['playlist_id'], rename)
+            except Exception:
+                logger.warning('Could not save optional topic-plan diagnostics')
         self.report(f"{topic['name']}: {len(desired)} recent videos; add {len(add)}, "
                     f"remove {len(remove)}; "
                     f"{'estimated ' if preview else 'remaining '}write cost {cost} units.")
@@ -485,11 +493,37 @@ class Sync:
     def finish_topic(self, topic):
         """Record full completion once; partial turns deliberately remain due."""
         finished = self.now()
+        if self.run_monitor:
+            self.run_monitor.completed.add(topic["id"])
+            self.run_monitor.data.get("topic_errors", {}).pop(str(topic["id"]), None)
         self.state.update(topic['id'], last_success=finished.isoformat(),
                           next_due=staggered_due(self.state, topic, finished).isoformat(), last_error=None)
         self.report(f"Updated {topic['name']}: https://www.youtube.com/playlist?list={topic['playlist_id']}")
 
     def run(self, *, topic_name=None, preview=False, reconcile_only=False, all_topics=False):
+        """Capture a pre-run forecast and final usage without changing sync outcomes."""
+        options = dict(topic_name=topic_name, preview=preview, reconcile_only=reconcile_only, all_topics=all_topics)
+        try:
+            self.run_monitor = RunDiagnostics(self, **options)
+        except Exception:
+            logger.warning('Could not start optional run diagnostics; continuing normal update')
+        try:
+            code = self._run(**options)
+        except BaseException as error:
+            self.finish_diagnostics(130 if isinstance(error, KeyboardInterrupt) else 1, error)
+            raise
+        self.finish_diagnostics(code)
+        return code
+
+    def finish_diagnostics(self, code, error=None):
+        """A diagnostic failure must never mask the actual update result."""
+        if self.run_monitor:
+            try:
+                self.run_monitor.finish(code, error)
+            except Exception:
+                logger.warning('Could not finish optional run diagnostics')
+
+    def _run(self, *, topic_name=None, preview=False, reconcile_only=False, all_topics=False):
         """Visit a fixed eligible queue in adaptive rounds, persisting the cursor each turn.
 
         Manual updates may target disabled topics; auto/all exclude them. Budget
@@ -505,12 +539,14 @@ class Sync:
         if not topics:
             self.report('No enabled topics are due. Nothing to update.')
             return 0
+        self.api.topic_id = None
         try:
             self.identify()
         except QuotaStop as error:
             self.report(str(error))
             return 2
         failed = False
+        conflicts = {}
         # A generator holds the completed discovery/model plan between rounds.
         # Its successful writes are durable, but the plan is never trusted after restart.
         queue = deque((topic['id'], None) for topic in topics)
@@ -518,6 +554,7 @@ class Sync:
         while queue:
             topic_id, steps = queue.popleft()
             topic = self.state.by_id(topic_id)
+            self.api.topic_id = topic_id
             allowance = max(1, min(5, self.api.remaining() // (50 * (len(queue) + 1)))) if automatic else None
             progress(f"{topic['name']}: up to {allowance} changes this turn; {len(queue)} other playlists waiting…"
                      if automatic else f"Updating {topic['name']}…")
@@ -552,16 +589,41 @@ class Sync:
             except QuotaStop as error:
                 if not preview:
                     self.state.update(topic_id, last_error=str(error))
+                if self.run_monitor:
+                    self.run_monitor.data.setdefault("topic_errors", {})[str(topic_id)] = safe_text(error)
                 logger.warning("Run paused topic=%s reason=%s", safe_text(topic["name"]), safe_text(error))
                 self.report(f"Paused at {topic['name']}: {error}")
                 return 2
             except (ApiFailure, ConnectionFailure, ValueError) as error:
+                conflict = isinstance(error, ApiFailure) and error.recoverable_conflict
+                if conflict and conflicts.get(topic_id, 0) < 2:
+                    attempt = conflicts.get(topic_id, 0) + 1
+                    conflicts[topic_id] = attempt
+                    delay = (1, 3)[attempt - 1]
+                    if not preview:
+                        self.state.update(topic_id, last_error=str(error))
+                    logger.warning('Recovering YouTube conflict topic=%s attempt=%s/2 delay=%ss pending=%s',
+                                   safe_text(topic['name']), attempt, delay, bool(self.state.pending(topic_id)))
+                    self.report(f"{topic['name']}: temporary YouTube conflict; waiting {delay}s, then checking saved progress (recovery {attempt}/2).")
+                    if self.run_monitor:
+                        self.run_monitor.data.setdefault('conflict_recoveries', []).append(
+                            dict(topic_id=topic_id, attempt=attempt, delay_seconds=delay))
+                    # The failed generator's plan cannot be resumed. Rebuild it
+                    # from fresh state; pending writes force complete ownership/
+                    # contents reconciliation before any replacement mutation.
+                    if steps is not None:
+                        steps.close()
+                    time.sleep(delay)
+                    queue.append((topic_id, None))
+                    continue
                 failed = True
+                if self.run_monitor:
+                    self.run_monitor.data.setdefault("topic_errors", {})[str(topic_id)] = safe_text(error)
                 logger.warning("Topic failed topic=%s reason=%s", safe_text(topic["name"]), safe_text(error))
                 if not preview:
                     self.state.update(topic_id, last_error=str(error))
                 self.report(f"Could not update {topic['name']}: {error}")
-                if isinstance(error, ConnectionFailure) or (isinstance(error, ApiFailure) and error.stop_run):
+                if isinstance(error, ConnectionFailure) or (isinstance(error, ApiFailure) and error.stop_run and not conflict):
                     return 1
         self.report(f"API units used this run: {self.api.spent}.")
         return 1 if failed else 0

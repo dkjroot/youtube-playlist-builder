@@ -60,7 +60,7 @@ class Jobs:
             str(a.llm_config.absolute()),
         ]
 
-    def start(self, action, name=None):
+    def start(self, action, name=None, forecast=None):
         """Validate the requested job and start a worker without blocking HTTP progress polls."""
         commands = {
             "auto": ["auto"],
@@ -84,6 +84,17 @@ class Jobs:
             action in ("update", "preview", "reconcile") and not isinstance(name, str)
         ):
             raise ValueError("Choose a supported update action and topic.")
+        if forecast is not None:
+            if not isinstance(forecast, dict) or forecast.keys() - {'rate', 'mode', 'days'}:
+                raise ValueError('Invalid forecast settings.')
+            rate = forecast.get('rate', 1)
+            if type(rate) not in (int, float) or not 0 <= rate <= 1000:
+                raise ValueError('Invalid forecast rate.')
+            if forecast.get('mode', 'budget') not in ('budget', 'demand'):
+                raise ValueError('Invalid forecast mode.')
+            days = str(forecast.get('days', 'auto'))
+            if days != 'auto' and (not days.isdigit() or not 1 <= int(days) <= 366):
+                raise ValueError('Invalid forecast period.')
         with self.lock:
             if self.closed:
                 raise ValueError("The local server is shutting down.")
@@ -98,6 +109,7 @@ class Jobs:
                 code=None,
                 lines=[],
                 result=None,
+                forecast=forecast,
             )
             job = self.job
         threading.Thread(
@@ -111,6 +123,9 @@ class Jobs:
         output_size = 0
         try:
             env = dict(os.environ, YT_PLAYLISTS_PROGRESS="1")
+            env.pop('YT_PLAYLISTS_FORECAST', None)
+            if job.get('forecast') is not None:
+                env['YT_PLAYLISTS_FORECAST'] = json.dumps(job['forecast'])
             with self.lock:
                 if self.closed:
                     job["code"] = 130
@@ -449,7 +464,7 @@ def make_server(args, port, *, session_token=None):
                     return self.reply(200, {"ok": True})
                 if path == "/api/jobs":
                     return self.reply(
-                        202, {"id": jobs.start(body.get("action"), body.get("name"))}
+                        202, {"id": jobs.start(body.get("action"), body.get("name"), body.get("forecast"))}
                     )
                 if path == "/api/redistribute":
                     state = State(args.state)

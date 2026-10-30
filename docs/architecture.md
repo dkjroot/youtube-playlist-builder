@@ -347,8 +347,13 @@ confirmed exhausted-day flag.
 
 ApiFailure marks HTTP408/5xx and service-unavailable/backend/internal reasons as
 uncertain, including the observed HTTP409 SERVICE_UNAVAILABLE. Sync preserves
-pending intent and stops the entire run for uncertain service errors or transport
-failures, reconciling before subsequent writes. Definite client rejection clears
+pending intent. HTTP409 conflicts get up to two higher-level recoveries per topic
+with1/3second backoff and a fresh generator/plan. Pending writes force complete
+remote ownership/contents reconciliation before any replacement mutation; an
+insertion already present is adopted, not inserted twice. Unknown creation with
+no unique marker match remains pending and is not recreated. Exhausted conflict
+recovery fails that topic but leaves other topics runnable. Other uncertain service
+errors and transport failures still stop the entire run. Definite client rejection clears
 pending intent and fails that topic without retrying it within the run. Normal
 multi-topic rotation retains generators after successful writes only. Deletion
 progress now includes the per-plan count so distinct deletions are visible.
@@ -363,3 +368,37 @@ stages. No live API calls were needed to audit it.
 LLM run/day limits now default to0 (disabled), with optional positive caps retained
 and daily accounting/cache behaviour unchanged. Existing explicit config values
 still apply until edited. These limits are independent of YouTube API units.
+
+
+## Forecast comparison records
+
+`run_diagnostics.py` captures a pre-run scenario in run_diagnostics with a UUID,
+start/finish timestamps and status. Web Jobs validates and forwards only rate,
+graph mode and period in child environment YT_PLAYLISTS_FORECAST; CLI records an
+explicitly labelled default scenario. Capture precedes identify/discovery/writes.
+The displayed graph and a separate same-day forced-scope forecast distinguish
+Update all/manual operations from the scheduled graph. Per-topic estimates retain
+cadence, age, slots, previous success and due date.
+
+YouTube.call attributes charged request counts/units by resource.method to the
+run and currently executing topic, with identity under shared. Cache savings
+therefore belong to the first topic that fetched shared data; these are observed
+execution costs rather than each topic's standalone cost. Sync records complete
+plans separately from actual mutations and marks completed topics, errors, final
+LLM call count and partial/paused/interrupted outcomes. Selected new uploads since
+last success are recorded by channel, explicitly marked as censored for capped
+topics, not treated as a full publishing-rate sample. No raw video metadata/audio,
+credentials, model prompts or replies are added.
+
+The newest120 records survive log rotation and are covered by full database
+backups. Optional diagnostic failures log warnings without masking sync outcomes.
+All estimation and logging is local; no extra API/model calls. Forecast algorithms,
+user settings and schedules are unchanged by diagnostics. Tests cover before/after
+separation, exact per-call sums, same-day run isolation, all-versus-due scope,
+failed/partial records, invalid optional settings, bounded retention and diagnostic
+failure isolation.
+
+
+Run diagnostics include conflict-recovery attempts and preserve previous plans
+when a retry rebuilds one, while actual request counters include all failed calls
+and reconciliation overhead. No blanket request-rate limiter is introduced.

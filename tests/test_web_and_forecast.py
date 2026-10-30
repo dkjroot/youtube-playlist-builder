@@ -129,7 +129,8 @@ class WebTests(unittest.TestCase):
     def test_empty_auto_job_completes_without_signin_and_streams_output(self):
         import time
 
-        status, body = self.api("/api/jobs", {"action": "auto"})
+        context = {"rate": 0.25, "mode": "demand", "days": "28"}
+        status, body = self.api("/api/jobs", {"action": "auto", "forecast": context})
         self.assertEqual(status, 202)
         deadline = time.monotonic() + 10
         job = None
@@ -140,8 +141,15 @@ class WebTests(unittest.TestCase):
             time.sleep(0.02)
         self.assertFalse(job["running"])
         self.assertEqual(job["code"], 0)
+        self.assertEqual(job["forecast"], context)
         self.assertIn("Nothing to update", "\n".join(job["lines"]))
         self.assertFalse(self.args.token.read_text() != "private-token-do-not-expose")
+
+    def test_job_forecast_context_is_validated(self):
+        with patch("youtube_playlist_builder.web.subprocess.Popen") as process:
+            for context in ({"rate": -1}, {"mode": "invalid"}, {"days": "1000"}, {"extra": "bad"}):
+                self.assertEqual(self.api("/api/jobs", {"action": "auto", "forecast": context})[0], 400)
+            process.assert_not_called()
 
     def test_redistribution_and_both_forecasts_are_available_without_remote_jobs(self):
         for i in range(3):

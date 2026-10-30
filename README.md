@@ -209,6 +209,10 @@ SQLite database, and has a dark theme. No node build or separate frontend instal
 is needed. Global `--state`, credential and `--llm-config` options go before `web`
 just as they do before other commands.
 
+Each topic in the left sidebar has an **Enable** or **Disable** button. It saves
+the automatic-update setting immediately, without opening the editor or pressing
+Save. Any other unsaved edits in the properties form stay there.
+
 Choose a topic to edit its schedule, age limit, name, description and filters.
 Drag channels from the searchable subscriptions list into the editor, or use
 its + buttons. Hover a channel name to read its description from the local
@@ -928,11 +932,24 @@ topic failures are logged too, so a quota pause, model cap and service failure
 can be distinguished. Removal progress includes a count within that playlist's
 plan, rather than repeating an identical line for every video.
 
+Updates also save a comparison record in the local database before starting:
+the forecast settings from the web page, its forecast, and an estimate for the
+actual topics being updated. This matters for Update all, which includes topics
+that aren't due on today's graph. Each run then records its own calls and charged
+units, planned additions/removals, completed topics, LLM call count and whether it
+finished, paused or failed. Daily update and Update all remain separate records.
+The latest 120 records are retained and included in database backups. This needs
+no extra YouTube or model calls; it doesn't change the forecast assumptions.
+
 A confirmed YouTube daily-quota rejection stops the whole run and blocks further
 calls for that Pacific day, even if you raise the local budget. Temporary rate
-limits pause without marking the daily quota exhausted. Service failures and
-connection timeouts stop the run; uncertain writes remain pending and are
-reconciled before a later retry. No automatic write retry is added. Other definite
+limits pause without marking the daily quota exhausted. HTTP 409 conflicts get
+up to two recovery attempts per topic, with one- and three-second waits. Each attempt rebuilds the topic plan from fresh state, checking
+any uncertain write against the remote playlist before another mutation. If the
+conflict persists, that topic stays incomplete and the run continues with other
+topics. Other service failures and connection timeouts stop the run, preserving
+uncertain writes for reconciliation. Uncertain playlist creation is never blindly
+repeated. Other definite
 request errors fail that topic, with later topics still eligible for a turn.
 
 For Gemini, a missing key is caught before contacting the model. Environment

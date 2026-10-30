@@ -1,6 +1,7 @@
 """Every managed endpoint must stop on quota; uncertain failures retain write intent."""
 import json
 from unittest import TestCase
+from unittest.mock import patch
 from googleapiclient.errors import HttpError
 from httplib2 import Response
 
@@ -51,7 +52,8 @@ class ApiErrorTests(TestCase):
         self.assertEqual(len(self.writes()), 1)
         self.assertEqual(self.state.topic('later')['last_success'], other.get('last_success') or NOW.isoformat())
 
-    def test_transient_delete_stops_and_reconciles_before_resuming(self):
+    @patch("youtube_playlist_builder.sync.time.sleep")
+    def test_transient_delete_recovers_and_reconciles_before_resuming(self, sleep):
         topic = self.topic('politics')
         self.topic('later')
         self.assertEqual(self.sync().run(), 0)
@@ -60,10 +62,8 @@ class ApiErrorTests(TestCase):
         # Simulate an applied deletion whose server replied 409 SERVICE_UNAVAILABLE.
         self.server.failure = ('playlistItems','delete',True,http_error(409,'SERVICE_UNAVAILABLE'))
         self.state.set_meta('cursor', 0)
-        self.assertEqual(self.sync().run(all_topics=True), 1)
-        self.assertEqual(len(self.writes()), 1)
-        self.assertIsNotNone(self.state.pending(topic['id']))
         self.assertEqual(self.sync().run(all_topics=True), 0)
+        sleep.assert_called_once_with(1)
         self.assertIsNone(self.state.pending(topic['id']))
         # Missing item from the uncertain delete is reconciled, not deleted again.
         deleted = [call[2]['id'] for call in self.writes() if call[1] == 'delete']

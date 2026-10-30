@@ -534,3 +534,10 @@ header {
 
 /* Keep the activity heading visible below the sticky notification when linked. */
 #activity-panel { scroll-margin-top:52px; }
+
+
+/* Keep immediate schedule toggles separate from the topic's editor button. */
+.topic-row { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:7px; margin-bottom:8px; align-items:start; }
+.topic-row .topic { margin-bottom:0; overflow-wrap:anywhere; }
+.topic-toggle { min-width:70px; padding:9px 7px; margin-top:3px; }
+.topic-toggle[aria-pressed="true"] { border-color:var(--accent); }
