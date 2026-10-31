@@ -544,3 +544,9 @@ header {
 
 .forecast-controls .forecast-calibration { display:flex; align-items:center; gap:7px; padding-bottom:9px; }
 .forecast-calibration input { width:auto; margin:0; }
+
+
+.schedule-times { display:flex; flex-wrap:wrap; gap:10px; list-style:none; padding:0; }
+.schedule-times li { display:flex; align-items:center; gap:12px; border:1px solid var(--border); border-radius:8px; padding:8px 12px; }
+#schedule-form { align-items:end; }
+#schedule-form label { margin:0; }

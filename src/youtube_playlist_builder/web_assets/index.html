@@ -259,6 +259,20 @@
      </div>
     </aside>
    </div>
+   <section class="panel" id="automatic-updates">
+    <h2>Automatic updates</h2>
+    <p class="muted">Add daily times to run Update due, using <span id="schedule-zone">your calendar timezone</span>.
+     The server checks every five minutes. Times missed while it is stopped are skipped,
+     as are runs when another operation is still going.</p>
+    <form id="schedule-form" class="actions">
+     <label>Update time <input id="schedule-time" type="time" step="60" required=""/></label>
+     <button id="schedule-add" type="submit">Add time</button>
+    </form>
+    <ul id="schedule-times" class="schedule-times" aria-label="Daily update times"></ul>
+    <p class="muted" id="schedule-empty">No automatic update times set.</p>
+    <p class="muted">The forecast still assumes one update run per day for Every time topics.
+     Several scheduled runs can use more quota.</p>
+   </section>
    <section class="panel" id="activity-panel">
     <div class="section-head">
      <h2>
@@ -268,7 +282,7 @@
       Ready
      </span>
     </div>
-    <pre aria-live="polite" id="activity">Updates only run when you request them.</pre>
+    <pre aria-live="polite" id="activity">Manual and scheduled updates appear here.</pre>
    </section>
   </main>
   <dialog id="settings">

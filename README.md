@@ -218,7 +218,8 @@ Drag channels from the searchable subscriptions list into the editor, or use
 its + buttons. Hover a channel name to read its description from the local
 subscription export. Each channel has a priority dropdown, slot allocation and
 optional age override. Save commits local settings; it doesn't update YouTube. Use Preview,
-Update now, Update due topics or Update all to request that work explicitly.
+Update now, Update due topics or Update all to request that work explicitly,
+or add daily times under **Automatic updates**.
 Activity shows progress and budget pauses. Opening the page spends no API quota.
 
 Refresh loads a fresh subscription export for the channel list and invalidates
@@ -567,7 +568,7 @@ yt-playlists topics set politics --frequency every-time
 The forecast assumes one update run per day for these topics. Running updates
 several times a day uses more quota, including fresh discovery reads even when
 there are no playlist changes. This option doesn't start updates by itself;
-choosing particular times for automatic updates is still a separate step.
+add times under **Automatic updates** to have the running server do that.
 
 Set your scheduling timezone once:
 
@@ -623,10 +624,36 @@ without updating playlists or schedules.
 
 A manual `update NAME` runs even when that topic is disabled or not due.
 
-The program only runs when you start it. Auto mode chooses what to update; it
-doesn't install a background scheduler. Old videos leave playlists on an update,
-not automatically at midnight. A hosted model also needs this script running
-somewhere, whether that's your laptop or a server.
+### Automatic update times
+
+In the web page's **Automatic updates** section, add as many daily times as you
+want using the time field and **Add time**. Each addition or removal saves
+immediately. Times use the calendar timezone shown beside the list, which you
+can change in Settings. Removing all the times turns automatic updates off.
+
+While the web server is running, it checks the list every five minutes. If a
+listed time occurred since the last check, within the last five minutes, it
+starts the same **Update due** operation as the button. A run can therefore
+start up to five minutes after its listed time. Every time topics are eligible
+on each run; other topics keep their normal daily or longer frequency.
+
+Times missed while the server is stopped are skipped. Restarting doesn't catch
+up earlier times, and waking a sleeping laptop only checks the most recent five
+minutes. If another operation is running, that scheduled run is skipped too.
+Several times in one check window produce one update, rather than a queue of
+identical jobs. On the autumn clock change, a repeated local time runs once;
+on the spring clock change, a local time that doesn't exist is skipped.
+
+You can close the browser tab and leave the server running. Scheduled work uses
+the same sign-in, quota limits and saved progress as manual updates. Activity
+shows scheduled jobs too; an idle page checks for them every five minutes and
+shows live progress once it notices a running job. The forecast still assumes
+one update run per day for Every time topics, so it doesn't yet include all the
+extra reads and possible playlist changes from several daily runs.
+
+This doesn't install a system service or wake your computer. Keep
+`yt-playlists web` running wherever you want the updates to happen. Old videos leave playlists
+on an update, rather than automatically at midnight.
 
 ### Minimum video length
 

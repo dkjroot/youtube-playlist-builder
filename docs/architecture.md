@@ -449,6 +449,33 @@ terminal menu and CLI expose the shared frequency choice.
 
 The daily forecast assumes one invocation per day for every-time topics and says
 so in its assumptions. It includes them even when a saved due time is in the
-future. Redistribution leaves their dates and slot metadata untouched. Timed
-background scheduling and forecasting several invocations a day remain future
-work; selecting this frequency does not install or launch a scheduler.
+future. Redistribution leaves their dates and slot metadata untouched. Selecting
+this frequency alone does not launch a scheduler. The web server can run it at configured daily times as described below; forecasting several daily
+invocations remains future work.
+
+
+## Server-side daily update times
+
+`auto_schedule.py` validates and normalises the `schedule_times` metadata list
+as unique sorted HH:MM values. The same calendar timezone setting governs these
+times. `/api/schedule` saves local configuration under the existing state lock,
+with the same session-token and origin protection as other mutations. The web
+page adds/removes times immediately and preserves an unsaved topic draft.
+
+The HTTP server starts one scheduler thread when `serve_forever` begins and
+stops it when serving ends or the server closes. `Event.wait(300)` is the only
+scheduler timer; shutdown interrupts it immediately. No work is launched at
+startup. Each check examines (max(previous check, now minus five minutes), now].
+UTC minute boundaries are converted to local dates and times, handling midnight
+and DST. Spring gaps never match; seen local date/time keys suppress the repeated
+autumn hour. The in-memory seen set is bounded to two days. Failed reads skip the
+window and log an error while preserving subsequent checks.
+
+Eligible times in one window coalesce into one `Jobs.start('auto', scheduled=True)`.
+The jobs lock atomically skips a busy/closing server rather than queueing work.
+The child uses normal auto selection, authentication, quota accounting and
+recovery, with scheduled source recorded in the activity snapshot. This needs
+neither an open page nor an OS scheduler. Stopped-server times and checks delayed
+more than five minutes are never caught up. Idle browser job discovery also runs
+at five-minute intervals; running-job progress retains its normal short poll.
+The daily forecast explicitly retains its one-run-per-day assumption.

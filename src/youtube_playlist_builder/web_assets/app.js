@@ -6,7 +6,9 @@ const token = document.querySelector('meta[name=yt-local]').content;
 let state, draft = null,
   creating = false,
   running = false,
-  polling = null;
+  polling = null,
+  seenJobId = null,
+  scheduleSaving = false;
 const node = (tag, text, cls) => {
   const n = document.createElement(tag);
   if (text !== undefined) n.textContent = text;
@@ -273,21 +275,66 @@ function library() {
     `Showing 150 of ${matches.length}. Search to narrow the list.`));
   if (!state.channels.length) box.append(node('p', 'Refresh subscriptions to load your channels.'));
 }
+/** Saved clock times use the server timezone and never depend on an open browser. */
+function renderSchedule() {
+  $('schedule-zone').textContent = state.settings.timezone;
+  const times = state.settings.schedule_times || [];
+  $('schedule-empty').hidden = times.length > 0;
+  $('schedule-add').disabled = scheduleSaving;
+  $('schedule-times').replaceChildren(...times.map(time => {
+    const row = node('li');
+    const remove = node('button', 'Remove');
+    remove.type = 'button';
+    remove.disabled = scheduleSaving;
+    remove.setAttribute('aria-label', 'Remove update time ' + time);
+    remove.onclick = () => saveSchedule(times.filter(value => value !== time));
+    row.append(node('span', time), remove);
+    return row;
+  }));
+}
+/** Add and remove times immediately without reopening or losing the topic draft. */
+async function saveSchedule(times) {
+  if (scheduleSaving) return;
+  scheduleSaving = true;
+  renderSchedule();
+  try {
+    const result = await api('/api/schedule', {times});
+    state.settings.schedule_times = result.times;
+    $('schedule-time').value = '';
+    notice('Automatic update times saved.');
+  } catch (error) {
+    notice(error.message, true);
+  } finally {
+    scheduleSaving = false;
+    renderSchedule();
+  }
+}
+$('schedule-form').onsubmit = e => {
+  e.preventDefault();
+  if ($('schedule-time').value) {
+    saveSchedule([...(state.settings.schedule_times || []), $('schedule-time').value]);
+  }
+};
+
 /** Refresh local management data and forecast after saves or completed jobs. */
-async function load() {
+async function load(preserveDraft = false) {
   state = await api('/api/state');
   fillSummary();
+  renderSchedule();
   listTopics();
   library();
-  $('frequency').replaceChildren(...state.frequencies.map(f => {
-    const o = node('option', f === 'every-time' ? 'Every time' : f);
-    o.value = f;
-    return o;
-  }));
-  if (draft) {
-    const t = state.topics.find(t => t.name === draft.name);
-    if (t && !creating) openTopic(t);
-  } else if (state.topics.length) openTopic(state.topics[0]);
+  const keepDraft = preserveDraft && draft && $('save-topic').dataset.status !== 'saved';
+  if (!keepDraft) {
+    $('frequency').replaceChildren(...state.frequencies.map(f => {
+      const o = node('option', f === 'every-time' ? 'Every time' : f);
+      o.value = f;
+      return o;
+    }));
+    if (draft) {
+      const t = state.topics.find(t => t.name === draft.name);
+      if (t && !creating) openTopic(t);
+    } else if (state.topics.length) openTopic(state.topics[0]);
+  }
   await forecast();
 }
 /** Request a local-only planning scenario using the explicit expected matching-upload rate. */
@@ -408,11 +455,20 @@ async function job(action) {
 async function poll() {
   try {
     const j = await api('/api/job');
-    if (!j) return;
+    if (!j || (!running && j.id === seenJobId)) return;
+    if (j.running) {
+      $('job-status').textContent = j.scheduled ? 'Scheduled update running…' : 'Running…';
+      if (!running) {
+        running = true;
+        polling = setInterval(poll, 700);
+      }
+    }
     $('activity').textContent = j.lines.join('\n');
     $('activity').scrollTop = $('activity').scrollHeight;
     if (!j.running) {
       clearInterval(polling);
+      polling = null;
+      seenJobId = j.id;
       running = false;
       $('job-status').textContent = j.code === 0 ? 'Completed' : j.code === 2 ? 'Paused: quota or budget' :
         'Finished with an error';
@@ -437,7 +493,7 @@ async function poll() {
           return b;
         }));
       }
-      await load();
+      await load(true);
     }
   } catch (e) {
     clearInterval(polling);
@@ -535,11 +591,14 @@ $('settings-form').onsubmit = async e => {
 };
 load().then(async () => {
   const j = await api('/api/job');
+  seenJobId = j?.id || null;
   if (j?.running) {
     running = true;
     polling = setInterval(poll, 700);
   }
 }).catch(e => notice(e.message, true));
+// Discover server-started jobs without frequent polling while the page is idle.
+setInterval(() => { if (!running) poll(); }, 300000);
 
 /** Explicitly rearrange saved dates; forecasts/quotas are read locally, never remote requests. */
 $('redistribute').onclick = async () => {

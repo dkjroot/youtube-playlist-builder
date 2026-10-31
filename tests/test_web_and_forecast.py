@@ -96,6 +96,21 @@ class WebTests(unittest.TestCase):
             self.assertIn('one update run per day', json.loads(body)['assumptions'])
             process.assert_not_called()
 
+    def test_schedule_times_save_validate_and_can_be_cleared_without_jobs(self):
+        with patch('youtube_playlist_builder.web.subprocess.Popen') as process:
+            self.assertEqual(self.request('POST', '/api/schedule', {'times': ['08:00']})[0], 403)
+            status, body = self.api('/api/schedule', {'times': ['18:30', '08:00', '18:30']})
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)['times'], ['08:00', '18:30'])
+            status, body = self.api('/api/state')
+            self.assertEqual(json.loads(body)['settings']['schedule_times'], ['08:00', '18:30'])
+            for body in ({'times': ['24:00']}, {'times': '08:00'}, {}, {'times': [], 'extra': True}):
+                self.assertEqual(self.api('/api/schedule', body)[0], 400)
+            self.assertEqual(self.api('/api/schedule', {'times': []})[0], 200)
+            self.assertEqual(json.loads(self.api('/api/state')[1])['settings']['schedule_times'], [])
+            process.assert_not_called()
+        self.assertTrue(self.server.scheduler.thread.is_alive())
+
     def test_same_origin_token_required_for_edits(self):
         self.assertEqual(
             self.api(

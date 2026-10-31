@@ -1,6 +1,6 @@
 """Loopback-only management UI over the same state, validation and CLI jobs.
 
-Opening the page only reads local data. Updates/previews/discovery run as explicit
+Opening the page only reads local data. Manual and scheduled updates run as
 child CLI jobs with the existing state lock, quota ledger and recovery records.
 The server never returns credential files or arbitrary filesystem paths. A per-
 launch token and same-origin checks protect mutations from unrelated browser tabs.
@@ -20,6 +20,7 @@ import uuid
 import webbrowser
 from zoneinfo import ZoneInfo
 
+from .auto_schedule import AutoSchedule, validate_times
 from .organiser import channel_detail, assign_channel, fetch_channel_videos
 from .limits import prepare_limits
 from .forecast import project, planning_days
@@ -60,7 +61,7 @@ class Jobs:
             str(a.llm_config.absolute()),
         ]
 
-    def start(self, action, name=None, forecast=None):
+    def start(self, action, name=None, forecast=None, *, scheduled=False):
         """Validate the requested job and start a worker without blocking HTTP progress polls."""
         commands = {
             "auto": ["auto"],
@@ -98,6 +99,8 @@ class Jobs:
             if days != 'auto' and (not days.isdigit() or not 1 <= int(days) <= 366):
                 raise ValueError('Invalid forecast period.')
         with self.lock:
+            if scheduled and (self.closed or (self.job and self.job["running"])):
+                return None
             if self.closed:
                 raise ValueError("The local server is shutting down.")
             if self.job and self.job["running"]:
@@ -112,6 +115,7 @@ class Jobs:
                 lines=[],
                 result=None,
                 forecast=forecast,
+                scheduled=scheduled,
             )
             job = self.job
         threading.Thread(
@@ -233,6 +237,7 @@ def snapshot(args):
                     ("daily_budget", 9500),
                     ("single_topic_channels", False),
                     ("timezone", "UTC"),
+                    ("schedule_times", []),
                     ("mode", "text"),
                     ("minimum_video_seconds", 0),
                     ("subscription_cache_hours", 24),
@@ -481,6 +486,17 @@ def make_server(args, port, *, session_token=None):
                     finally:
                         state.close()
                     return self.reply(200, result)
+                if path == "/api/schedule":
+                    if set(body) != {"times"}:
+                        raise ValueError("Use only the times field for the update schedule.")
+                    times = validate_times(body["times"])
+                    state = State(args.state)
+                    try:
+                        with state.locked():
+                            state.set_meta("schedule_times", times)
+                    finally:
+                        state.close()
+                    return self.reply(200, {"times": times})
                 if path == "/api/settings":
                     flags = {
                         "single_topic_channels": "--single-topic-channels",
@@ -518,13 +534,28 @@ def make_server(args, port, *, session_token=None):
             except (ValueError, TypeError, OSError) as error:
                 return self.reply(400, {"error": str(error)})
 
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    class ScheduledServer(ThreadingHTTPServer):
+        def serve_forever(self, poll_interval=0.5):
+            self.scheduler.start()
+            try:
+                super().serve_forever(poll_interval=poll_interval)
+            finally:
+                self.scheduler.close()
+
+        def server_close(self):
+            if hasattr(self, "scheduler"):
+                self.scheduler.close()
+            jobs.close()
+            super().server_close()
+
+    server = ScheduledServer(("127.0.0.1", port), Handler)
     server.jobs = jobs
+    server.scheduler = AutoSchedule(args, jobs)
     return server
 
 
 def serve(args):
-    """Run the local UI until Ctrl-C; only button-triggered jobs use YouTube quota."""
+    """Run the local UI and saved update schedule until Ctrl-C."""
     server = make_server(args, args.port)
     url = f"http://127.0.0.1:{server.server_port}"
     print("YouTube playlist manager: " + url, flush=True)
