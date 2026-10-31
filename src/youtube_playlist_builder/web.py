@@ -85,8 +85,10 @@ class Jobs:
         ):
             raise ValueError("Choose a supported update action and topic.")
         if forecast is not None:
-            if not isinstance(forecast, dict) or forecast.keys() - {'rate', 'mode', 'days'}:
+            if not isinstance(forecast, dict) or forecast.keys() - {'rate', 'mode', 'days', 'calibrate'}:
                 raise ValueError('Invalid forecast settings.')
+            if type(forecast.get('calibrate', False)) is not bool:
+                raise ValueError('Invalid forecast calibration setting.')
             rate = forecast.get('rate', 1)
             if type(rate) not in (int, float) or not 0 <= rate <= 1000:
                 raise ValueError('Invalid forecast rate.')
@@ -394,6 +396,9 @@ def make_server(args, port, *, session_token=None):
                     cid = parse_qs(urlsplit(self.path).query).get("id", [""])[0]
                     return self.reply(200, channel_detail(args, cid))
                 if path == "/api/forecast":
+                    calibrated = parse_qs(urlsplit(self.path).query).get("calibrate", ["0"])[0]
+                    if calibrated not in ("0", "1"):
+                        raise ValueError("Invalid forecast calibration setting.")
                     rate = float(
                         parse_qs(urlsplit(self.path).query).get("rate", ["1"])[0]
                     )
@@ -418,7 +423,7 @@ def make_server(args, port, *, session_token=None):
                                 "Choose a forecast span between 1 and 366 days."
                             )
                         return self.reply(
-                            200, project(state, rate=rate, mode=mode, days=days)
+                            200, project(state, rate=rate, mode=mode, days=days, calibrate=calibrated == "1")
                         )
                     finally:
                         state.close()
@@ -471,7 +476,7 @@ def make_server(args, port, *, session_token=None):
                     try:
                         with state.locked():
                             result = redistribute(
-                                state, rate=float(body.get("rate", 1))
+                                state, rate=float(body.get("rate", 1)), calibrate=body.get("calibrate", False)
                             )
                     finally:
                         state.close()

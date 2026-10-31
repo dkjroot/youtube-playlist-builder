@@ -541,3 +541,6 @@ header {
 .topic-row .topic { margin-bottom:0; overflow-wrap:anywhere; }
 .topic-toggle { min-width:70px; padding:9px 7px; margin-top:3px; }
 .topic-toggle[aria-pressed="true"] { border-color:var(--accent); }
+
+.forecast-controls .forecast-calibration { display:flex; align-items:center; gap:7px; padding-bottom:9px; }
+.forecast-calibration input { width:auto; margin:0; }

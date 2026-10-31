@@ -68,7 +68,7 @@ function listTopics() {
     const b = node('button', undefined, 'topic' + (draft?.name === t.name && !creating ? ' selected' : ''));
     b.append(node('strong', t.name), node('small',
       `${t.enabled?'Enabled':'Paused'} · ${t.item_count} videos · ${t.max_videos??'unlimited'} capacity`));
-    const due = !t.next_due || Date.parse(t.next_due) <= Date.now()
+    const due = t.frequency === 'every-time' ? 'Every update run' : !t.next_due || Date.parse(t.next_due) <= Date.now()
       ? 'Due now'
       : 'Next: ' + new Intl.DateTimeFormat('en-GB', {day:'numeric', month:'short', timeZone:state.settings.timezone}).format(new Date(t.next_due));
     b.append(node('small', due));
@@ -280,7 +280,7 @@ async function load() {
   listTopics();
   library();
   $('frequency').replaceChildren(...state.frequencies.map(f => {
-    const o = node('option', f);
+    const o = node('option', f === 'every-time' ? 'Every time' : f);
     o.value = f;
     return o;
   }));
@@ -293,7 +293,7 @@ async function load() {
 /** Request a local-only planning scenario using the explicit expected matching-upload rate. */
 async function forecast() {
   try {
-    const f = await api('/api/forecast?rate=' + encodeURIComponent($('rate').value || 0) + '&mode=' + $('forecast-mode').value + '&days=' + $('forecast-days').value);
+    const f = await api('/api/forecast?rate=' + encodeURIComponent($('rate').value || 0) + '&mode=' + $('forecast-mode').value + '&days=' + $('forecast-days').value + '&calibrate=' + ($('forecast-calibrate').checked ? '1' : '0'));
     $('chart').style.gridTemplateColumns = `repeat(${f.days.length}, minmax(35px, 1fr))`;
     $('chart').style.minWidth = (f.days.length * 42) + 'px';
     const budgetMode = f.mode === 'budget';
@@ -390,7 +390,7 @@ async function job(action) {
     await api('/api/jobs', {
       action,
       name: draft?.name,
-      forecast: {rate:number('rate'), mode:$('forecast-mode').value, days:$('forecast-days').value}
+      forecast: {rate:number('rate'), mode:$('forecast-mode').value, days:$('forecast-days').value, calibrate:$('forecast-calibrate').checked}
     });
     running = true;
     $('job-status').textContent = 'Running…';
@@ -450,6 +450,7 @@ $('topic-form').addEventListener('input', markUnsaved);
 $('topic-form').addEventListener('change', markUnsaved);
 $('channel-search').oninput = library;
 $('rate').onchange = forecast;
+$('forecast-calibrate').onchange = forecast;
 $('forecast-mode').onchange = forecast;
 $('forecast-days').onchange = forecast;
 $('limited').onchange = allocate;
@@ -547,7 +548,7 @@ $('redistribute').onclick = async () => {
   button.disabled = true;
   button.textContent = 'Redistributing…';
   try {
-    const result = await api('/api/redistribute', {rate: Number($('rate').value || 0)});
+    const result = await api('/api/redistribute', {rate: Number($('rate').value || 0), calibrate:$('forecast-calibrate').checked});
     notice(result.message);
     // Refresh scheduling data without discarding an unsaved topic form.
     state = await api('/api/state');

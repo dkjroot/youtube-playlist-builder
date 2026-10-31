@@ -10,8 +10,8 @@ import calendar
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-FREQUENCIES = ('daily', 'every-2-days', 'every-4-days', 'weekly', 'biweekly', 'monthly')
-DAYS = dict(zip(FREQUENCIES[:-1], (1, 2, 4, 7, 14)))
+FREQUENCIES = ('daily', 'every-2-days', 'every-4-days', 'weekly', 'biweekly', 'monthly', 'every-time')
+DAYS = {'daily': 1, 'every-2-days': 2, 'every-4-days': 4, 'weekly': 7, 'biweekly': 14}
 
 
 def utcnow():
@@ -27,7 +27,9 @@ def parse_time(value):
 def next_due(now, frequency, timezone_name='UTC'):
     # Calendar days, not 24 hours after completion: a daily cron job must not
     # miss tomorrow just because today's update took a few seconds to finish.
-    """Calculate the full interval’s local midnight before assigning a staggered slot."""
+    """Return immediate eligibility or the calendar interval’s local midnight."""
+    if frequency == 'every-time':
+        return now.astimezone(timezone.utc)
     now = now.astimezone(ZoneInfo(timezone_name))
     if frequency == 'monthly':
         year, month = (now.year + 1, 1) if now.month == 12 else (now.year, now.month + 1)
@@ -39,11 +41,11 @@ def next_due(now, frequency, timezone_name='UTC'):
 
 
 def due_topics(topics, after_id, now, *, all_topics=False):
-    """Take one enabled-topic snapshot in cursor order; all mode bypasses only due dates."""
+    """Snapshot enabled topics in cursor order, including every-time on each run."""
     ordered = [topic for topic in topics if topic['id'] > after_id]
     ordered += [topic for topic in topics if topic['id'] <= after_id]
     return [topic for topic in ordered if topic['enabled'] and
-            (all_topics or not topic['next_due'] or parse_time(topic['next_due']) <= now)]
+            (all_topics or topic.get('frequency') == 'every-time' or not topic['next_due'] or parse_time(topic['next_due']) <= now)]
 
 
 def playlist_title(topic):
@@ -57,6 +59,8 @@ def staggered_due(state, topic, completed):
     The first interval may be shorter to establish the phase. Subsequent on-time
     runs retain that phase, instead of shortening every interval to fill gaps.
     """
+    if topic['frequency'] == 'every-time':
+        return completed.astimezone(timezone.utc)
     zone = state.meta('timezone', 'UTC')
     local = completed.astimezone(ZoneInfo(zone))
     nominal = next_due(completed, topic['frequency'], zone).astimezone(ZoneInfo(zone))
@@ -83,6 +87,8 @@ def staggered_due(state, topic, completed):
 
 def slot_due(completed, frequency, timezone_name, entry, *, include_today=False):
     """Return the next local midnight matching a persisted phase, without modifying state."""
+    if frequency == 'every-time':
+        return completed.astimezone(timezone.utc)
     local = completed.astimezone(ZoneInfo(timezone_name))
     for offset in range(0 if include_today else 1, 63):
         candidate = (local + timedelta(days=offset)).replace(hour=0,minute=0,second=0,microsecond=0)
@@ -99,6 +105,8 @@ def initialise_staggering(state, now):
     slots = state.meta('schedule_slots', {})
     for topic in state.topics():
         entry = slots.get(str(topic['id']))
+        if topic['frequency'] == 'every-time':
+            continue
         if not topic['enabled'] or (entry and entry['frequency'] == topic['frequency']):
             continue
         anchor = parse_time(topic['last_success']) if topic['last_success'] else now

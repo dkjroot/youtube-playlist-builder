@@ -39,6 +39,17 @@ class TopicTests(unittest.TestCase):
         self.assertEqual(state.topics(), [])
         auth.assert_not_called()
 
+    @patch('youtube_playlist_builder.cli.authenticate')
+    def test_every_time_frequency_can_be_created_and_edited_offline(self, auth):
+        self.assertEqual(self.cli('topics', 'add', 'news', '--frequency', 'every-time'), 0)
+        state = State(self.path)
+        self.addCleanup(state.close)
+        self.assertEqual(state.topic('news')['frequency'], 'every-time')
+        self.assertEqual(self.cli('topics', 'set', 'news', '--frequency', 'daily'), 0)
+        self.assertEqual(self.cli('topics', 'set', 'news', '--frequency', 'every-time'), 0)
+        self.assertEqual(state.topic('news')['frequency'], 'every-time')
+        auth.assert_not_called()
+
     def test_filters_can_be_replaced_and_cleared(self):
         self.cli('topics', 'add', 'chess', '--channel', CHANNEL, '--include', 'lesson')
         self.cli('topics', 'set', 'chess', '--clear-filters', '--exclude', 'short')

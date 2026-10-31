@@ -85,6 +85,20 @@ class RedistributionTests(unittest.TestCase):
         )
         self.assertIsNotNone(self.state.pending(pending["id"]))
 
+    def test_every_time_forecasts_each_day_and_redistribution_preserves_it(self):
+        topic = self.add('news', frequency='every-time')
+        before = self.state.by_id(topic['id'])
+        forecast = project(self.state, now=NOW, days=3)
+        self.assertEqual([row['topics'] for row in forecast['days']], [1, 1, 1])
+        self.assertIn('one update run per day', forecast['assumptions'])
+        self.assertEqual(planning_days(self.state.topics(), now=NOW), 28)
+        for i in range(8):
+            self.add('weekly' + str(i))
+        result = redistribute(self.state, now=NOW)
+        self.assertTrue(result['changed'])
+        self.assertEqual(self.state.by_id(topic['id']), before)
+        self.assertNotIn(str(topic['id']), self.state.meta('schedule_slots', {}))
+
     def test_automatic_span_covers_monthly_and_fortnightly_cadences(self):
         self.add("fortnight", frequency="biweekly")
         self.assertGreaterEqual(planning_days(self.state.topics(), now=NOW), 28)

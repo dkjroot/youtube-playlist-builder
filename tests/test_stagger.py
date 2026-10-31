@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from youtube_playlist_builder.schedule import initialise_staggering, staggered_due, next_due, parse_time
+from youtube_playlist_builder.schedule import initialise_staggering, staggered_due, next_due, parse_time, due_topics
 from youtube_playlist_builder.state import State
 from youtube_playlist_builder.cli import main
 from test_sync import NOW
@@ -27,6 +27,26 @@ class StaggerTests(unittest.TestCase):
             initial = state.topics()
             initialise_staggering(state, NOW)
             self.assertEqual(state.topics(), initial)
+
+    def test_every_time_ignores_future_due_and_can_switch_back_to_calendar(self):
+        from youtube_playlist_builder.topics import edit_topic
+        with TemporaryDirectory() as directory:
+            state = State(Path(directory) / 'state.db')
+            self.addCleanup(state.close)
+            topic = state.add('news', last_success=NOW.isoformat(),
+                              next_due=next_due(NOW, 'daily').isoformat())
+            edit_topic(state, topic, {'frequency': 'every-time'})
+            topic = state.by_id(topic['id'])
+            self.assertEqual(staggered_due(state, topic, NOW), NOW)
+            self.assertEqual(next_due(NOW, 'every-time'), NOW)
+            state.update(topic['id'], next_due=(NOW + timedelta(days=100)).isoformat())
+            self.assertEqual(len(due_topics(state.topics(), 0, NOW)), 1)
+            initialise_staggering(state, NOW)
+            self.assertNotIn(str(topic['id']), state.meta('schedule_slots', {}))
+            edit_topic(state, state.by_id(topic['id']), {'frequency': 'weekly'})
+            topic = state.by_id(topic['id'])
+            self.assertGreater(parse_time(topic['next_due']), NOW)
+            self.assertEqual(state.meta('schedule_slots')[str(topic['id'])]['frequency'], 'weekly')
 
     def test_monthly_and_dst_slots_remain_local_midnight(self):
         from zoneinfo import ZoneInfo

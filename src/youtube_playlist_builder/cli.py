@@ -112,6 +112,7 @@ def parser() -> argparse.ArgumentParser:
                                    help='Refresh subscribed channels now; uploads are always checked live.')
             operation.add_argument('--preview', action='store_true', help='Read and show proposed changes without writing to YouTube.')
     rebalance = commands.add_parser('redistribute', help='Spread enabled topic schedules using local forecast costs, with no API calls.')
+    rebalance.add_argument('--calibrate', action='store_true', help='Learn per-topic forecast corrections from completed update runs.')
     rebalance.add_argument('--rate', type=float, default=1.0, help='Assumed matching videos per channel per day.')
     commands.add_parser('status', help='Show the queue, schedules, and local daily quota usage.')
     settings = commands.add_parser('settings', help='View or set the local daily API budget (default 9500 units).')
@@ -186,7 +187,7 @@ def local_command(args, state):
     Topic edits invalidate due times where the desired playlist contents change.
     """
     if args.command == 'redistribute':
-        result = redistribute(state,rate=args.rate)
+        result = redistribute(state,rate=args.rate,calibrate=args.calibrate)
         print(result['message'])
         return 0
     if args.command in ('channels', 'suggest-topics'):

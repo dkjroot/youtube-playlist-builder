@@ -12,6 +12,7 @@ from collections import deque
 from zoneinfo import ZoneInfo
 
 from .limits import channel_age_days
+from .forecast_calibration import topic_calibration
 from .schedule import DAYS, parse_time, next_due, slot_due, utcnow
 
 
@@ -21,7 +22,7 @@ def planning_days(topics, *, now=None, timezone_name="UTC"):
     active = [topic for topic in topics if topic["enabled"] and topic["channels"]]
     longest = max(
         (
-            31 if topic["frequency"] == "monthly" else DAYS[topic["frequency"]]
+            31 if topic["frequency"] == "monthly" else (1 if topic["frequency"] == "every-time" else DAYS[topic["frequency"]])
             for topic in active
         ),
         default=14,
@@ -38,7 +39,7 @@ def planning_days(topics, *, now=None, timezone_name="UTC"):
                 ).days,
             )
             for topic in active
-            if topic["next_due"]
+            if topic["next_due"] and topic["frequency"] != "every-time"
         ),
         default=0,
     )
@@ -55,6 +56,8 @@ def project(
     schedule_slots=None,
     shared_reads=True,
     mode="demand",
+    calibrate=False,
+    calibration=None,
 ):
     """Simulate scheduled updates, firm slots, expiry and replacements under an explicit rate."""
     if not math.isfinite(rate) or not 0 <= rate <= 1000:
@@ -73,6 +76,9 @@ def project(
         for row in (state.topics() if topics is None else topics)
         if row["enabled"] and row["channels"]
     ]
+    calibration = (topic_calibration(state, topics, rate=rate, now=now) if calibration is None else calibration) if calibrate else {}
+    calibration = {tid: value for tid, value in calibration.items() if tid in {str(t['id']) for t in topics}}
+    calibrated_fractional = {}
     schedule_slots = (
         state.meta("schedule_slots", {}) if schedule_slots is None else schedule_slots
     )
@@ -108,13 +114,15 @@ def project(
     for offset in range(days):
         date = today + timedelta(days=offset)
         row = dict(
-            date=date.date().isoformat(), topics=0, reads=0, adds=0, removes=0, units=0
+            date=date.date().isoformat(), topics=0, reads=0, adds=0, removes=0, units=0, raw_adds=0, raw_reads=0
         )
         for topic in topics:
             due = parse_time(topic["next_due"]) if topic["next_due"] else now
-            if due.astimezone(ZoneInfo(zone)).date() > date.date():
+            if topic["frequency"] != "every-time" and due.astimezone(ZoneInfo(zone)).date() > date.date():
                 continue
             row["topics"] += 1
+            topic_reads = 0
+            correction = calibration.get(str(topic['id']), {})
             if not topic["playlist_id"]:
                 row["units"] += 50
                 topic["playlist_id"] = "forecast-only"
@@ -151,6 +159,17 @@ def project(
                 incoming = math.floor(expected)
                 fractional[key] = expected - incoming
                 additions = incoming if slots is None else min(incoming, slots)
+                row['raw_adds'] += additions
+                if correction:
+                    # Apply bias to uncertain arrivals, not to the 50-unit price
+                    # of mutations or known expiry. Share fractional rounding
+                    # across channels to avoid all quiet channels jumping together.
+                    cap = elapsed * rate if slots is None else min(elapsed * rate, slots)
+                    calibrated = cap * correction['additions'] + calibrated_fractional.get(topic['id'], 0)
+                    additions = math.floor(calibrated)
+                    calibrated_fractional[topic['id']] = calibrated - additions
+                    if slots is not None:
+                        additions = min(additions, slots)
                 overflow = (
                     max(0, len(kept) + additions - slots) if slots is not None else 0
                 )
@@ -163,9 +182,11 @@ def project(
                 candidates = max(1, math.ceil(rate * channel_age_days(topic, cid)))
                 if slots is not None:
                     candidates = max(1, min(candidates, max(slots, 50)))
-                row["reads"] += max(1, math.ceil(candidates / 50)) + math.ceil(
+                topic_reads += max(1, math.ceil(candidates / 50)) + math.ceil(
                     candidates / 50
                 )
+            row['raw_reads'] += topic_reads
+            row['reads'] += math.ceil(topic_reads * correction.get('reads', 1))
             topic["last_success"] = date.isoformat()
             entry = schedule_slots.get(str(topic["id"]))
             topic["next_due"] = (
@@ -175,12 +196,14 @@ def project(
             ).isoformat()
         if shared_reads and row["topics"]:
             row["reads"] += 1  # Live account identity check per scheduled run.
+            row["raw_reads"] += 1
             if (
                 not cache_hours
                 or subscription_fetched is None
                 or date >= subscription_fetched + timedelta(hours=cache_hours)
             ):
                 row["reads"] += subscription_pages
+                row["raw_reads"] += subscription_pages
                 subscription_fetched = date
         row["units"] += row["reads"] + 50 * (row["adds"] + row["removes"])
         rows.append(row)
@@ -193,13 +216,15 @@ def project(
         mode=mode,
         budget=state.meta("daily_budget", 9500),
         rate=rate,
+        calibration=dict(enabled=calibrate, topics=len(calibration), factors=calibration),
         assumptions=(
-            "Estimate using your assumed matching-upload rate and local daily ceiling. "
+            (f"Adjusted using completed updates for {len(calibration)} topics; other topics use the assumed rate. " if calibrate else "Unadjusted scenario using your assumed matching-upload rate. ")
             + (
                 "Requested work is queued into later days; expired or superseded work may need less effort in practice. "
                 if mode == "budget"
                 else "Requested work assumes scheduled updates finish; it does not carry budget delays forward. "
             )
+            + ("Every time topics assume one update run per day; additional runs use more quota. " if any(t["frequency"] == "every-time" for t in topics) else "")
             + "Reads are approximate. This does not know future uploads or Google’s actual remaining quota. Legacy entries without channel IDs are distributed evenly."
         ),
     )

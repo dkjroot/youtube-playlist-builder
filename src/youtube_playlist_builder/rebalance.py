@@ -9,11 +9,12 @@ the same cross-process lock as normal topic edits.
 import json
 
 from .forecast import project, planning_days
+from .forecast_calibration import topic_calibration
 from .schedule import DAYS, parse_time, slot_due, utcnow
 from zoneinfo import ZoneInfo
 
 
-def redistribute(state, *, rate=1.0, now=None):
+def redistribute(state, *, rate=1.0, now=None, calibrate=False):
     """Choose phases that reduce estimated peaks, then squared daily load.
 
     Start from current schedules and accept only strict improvements. Equal-cost
@@ -21,13 +22,16 @@ def redistribute(state, *, rate=1.0, now=None):
     daily topics and disabled topics retain their dates. Future repeats use the
     chosen slots. A three-pass coordinate search bounds work for large accounts.
     """
+    if type(calibrate) is not bool:
+        raise ValueError('Use true or false for forecast calibration.')
     now = now or utcnow()
     zone = state.meta("timezone", "UTC")
     topics = [row for row in state.topics() if row["enabled"] and row["channels"]]
+    corrections = topic_calibration(state, topics, rate=rate, now=now) if calibrate else {}
     slots = dict(state.meta("schedule_slots", {}))
     visible_days = planning_days(topics, now=now, timezone_name=zone)
     horizon = max(56, visible_days)
-    before = project(state, rate=rate, now=now, days=visible_days)
+    before = project(state, rate=rate, now=now, days=visible_days, calibrate=calibrate, calibration=corrections)
     choices = {}
     current = {}
     preserved = 0
@@ -42,7 +46,7 @@ def redistribute(state, *, rate=1.0, now=None):
         if fixed_due and frequency != "daily":
             preserved += 1
         original = slots.get(str(tid))
-        if not original or original["frequency"] != frequency:
+        if frequency != "every-time" and (not original or original["frequency"] != frequency):
             date = parse_time(topic["next_due"]) if topic["next_due"] else now
             date = date.astimezone(ZoneInfo(zone)).date()
             original = dict(
@@ -65,13 +69,14 @@ def redistribute(state, *, rate=1.0, now=None):
                 topics=[candidate],
                 schedule_slots={str(tid): entry},
                 shared_reads=False,
+                calibrate=calibrate, calibration=corrections,
             )["days"]
             return dict(entry=entry, due=due, cost=[row["units"] for row in rows])
 
         first = option(original, topic["next_due"])
         current[tid] = first
         choices[tid] = [first]
-        if frequency == "daily":
+        if frequency in ("daily", "every-time"):
             continue
         phases = range(1, 32) if frequency == "monthly" else range(DAYS[frequency])
         already_today = (
@@ -119,15 +124,17 @@ def redistribute(state, *, rate=1.0, now=None):
     proposed_topics = []
     for topic in topics:
         chosen = current[topic["id"]]
-        proposed_slots[str(topic["id"])] = chosen["entry"]
+        if topic["frequency"] != "every-time":
+            proposed_slots[str(topic["id"])] = chosen["entry"]
         proposed_topics.append(dict(topic, next_due=chosen["due"]))
-    baseline = project(state, rate=rate, now=now, days=horizon)
+    baseline = project(state, rate=rate, now=now, days=horizon, calibrate=calibrate, calibration=corrections)
     proposed = project(
         state,
         rate=rate,
         now=now,
         days=horizon,
         topics=proposed_topics,
+        calibrate=calibrate, calibration=corrections,
         schedule_slots=proposed_slots,
     )
     # Shared run reads can break an otherwise equal per-topic score. Verify the
@@ -139,6 +146,8 @@ def redistribute(state, *, rate=1.0, now=None):
     if accept:
         with state.db:
             for topic in topics:
+                if topic["frequency"] == "every-time":
+                    continue
                 chosen = current[topic["id"]]
                 key = str(topic["id"])
                 if (
@@ -157,7 +166,7 @@ def redistribute(state, *, rate=1.0, now=None):
                 "INSERT OR REPLACE INTO meta VALUES (?,?)",
                 ("schedule_slots", json.dumps(proposed_slots)),
             )
-    after = project(state, rate=rate, now=now, days=visible_days)
+    after = project(state, rate=rate, now=now, days=visible_days, calibrate=calibrate, calibration=corrections)
     return dict(
         changed=changed,
         preserved_due=preserved,

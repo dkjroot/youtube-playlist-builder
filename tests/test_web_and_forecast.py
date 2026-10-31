@@ -79,6 +79,23 @@ class WebTests(unittest.TestCase):
         self.assertNotEqual(self.request("GET", "/token.json")[0], 200)
         self.assertEqual(self.request("GET", "/api/state")[0], 403)
 
+    def test_every_time_is_available_and_saved_without_starting_an_update(self):
+        with patch('youtube_playlist_builder.web.subprocess.Popen') as process:
+            status, body = self.api('/api/state')
+            self.assertEqual(status, 200)
+            self.assertIn('every-time', json.loads(body)['frequencies'])
+            self.assertEqual(self.api('/api/topic', {
+                'action': 'add', 'name': 'news',
+                'fields': {'channels': [A], 'frequency': 'every-time'},
+            })[0], 200)
+            status, body = self.api('/api/state')
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)['topics'][0]['frequency'], 'every-time')
+            status, body = self.api('/api/forecast?days=3')
+            self.assertEqual(status, 200)
+            self.assertIn('one update run per day', json.loads(body)['assumptions'])
+            process.assert_not_called()
+
     def test_same_origin_token_required_for_edits(self):
         self.assertEqual(
             self.api(
@@ -129,7 +146,7 @@ class WebTests(unittest.TestCase):
     def test_empty_auto_job_completes_without_signin_and_streams_output(self):
         import time
 
-        context = {"rate": 0.25, "mode": "demand", "days": "28"}
+        context = {"rate": 0.25, "mode": "demand", "days": "28", "calibrate": True}
         status, body = self.api("/api/jobs", {"action": "auto", "forecast": context})
         self.assertEqual(status, 202)
         deadline = time.monotonic() + 10
@@ -147,7 +164,7 @@ class WebTests(unittest.TestCase):
 
     def test_job_forecast_context_is_validated(self):
         with patch("youtube_playlist_builder.web.subprocess.Popen") as process:
-            for context in ({"rate": -1}, {"mode": "invalid"}, {"days": "1000"}, {"extra": "bad"}):
+            for context in ({"rate": -1}, {"mode": "invalid"}, {"days": "1000"}, {"extra": "bad"}, {"calibrate": "yes"}):
                 self.assertEqual(self.api("/api/jobs", {"action": "auto", "forecast": context})[0], 400)
             process.assert_not_called()
 
@@ -182,6 +199,11 @@ class WebTests(unittest.TestCase):
             self.assertEqual(len(json.loads(body)["days"]), 62)
             process.assert_not_called()
         self.assertEqual(self.api("/api/forecast?mode=invalid")[0], 400)
+        self.assertEqual(self.api("/api/forecast?calibrate=bad")[0], 400)
+        status, adjusted = self.api("/api/forecast?calibrate=1")
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(adjusted)["calibration"]["enabled"])
+        self.assertEqual(self.api("/api/redistribute", {"calibrate": "yes"})[0], 400)
         self.assertEqual(self.api("/api/forecast?days=367")[0], 400)
         self.assertEqual(json.loads(self.api("/api/state")[1])["quota"]["used"], 0)
 

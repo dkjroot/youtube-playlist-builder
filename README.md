@@ -393,9 +393,23 @@ months. You can choose 10 days, four weeks, two months or three months instead.
 Scroll the chart horizontally to see all days and hover for daily figures.
 
 Both views use saved schedules, current playlist entries, allocations and age
-limits. Adjust **assumed matching videos per channel per day** to explore busier
-or quieter publishing. This rate is your assumption, not measured channel history.
-Save topic edits to include them in the next calculation. The dashed line is the
+limits. **Learn from completed updates** is on by default in the web interface.
+It learns a separate correction for each topic from up to five completed updates
+in the last 30 days. A quiet topic can have a lower expected turnover while a busy
+news topic keeps its higher estimate. Reads are adjusted separately from expected
+additions; a smaller write estimate doesn't imply fewer reads.
+
+Known expired videos, entries from removed channels, playlist creation and today's
+recorded usage keep their full cost. Each estimated insertion or deletion still
+costs 50 units. Failed, paused and conflict-recovery runs don't train the model.
+New diagnostic records include the topic's matching settings so changes can
+invalidate old samples; older records can bootstrap from the settings they saved.
+Early estimates have only a little history, so they will still vary.
+
+Turn learning off to see the original unadjusted scenario. Adjust **assumed matching
+videos per channel per day** to explore busier or quieter publishing; learning
+uses samples recorded with that same assumed rate. Topics without usable history
+keep the original assumption. Save topic edits to include them in the next calculation. The dashed line is the
 local ceiling; orange demand bars exceed it. Calculating either view spends no
 YouTube or model quota.
 
@@ -407,6 +421,9 @@ scheduled updates, so the carried queue can overestimate work that would merge
 or disappear in practice. It doesn't know future uploads, Google’s actual quota
 allowance or LLM prices. Legacy entries without channel attribution are spread
 evenly for the estimate until attribution is known.
+
+The web **Redistribute schedules** button uses the selected learning option too.
+The CLI equivalent can opt in with `redistribute --calibrate`.
 
 Use **Redistribute schedules** beside the chart to spread recurring work across
 days. It uses the selected upload-rate assumption and estimates costs over at
@@ -421,7 +438,7 @@ yt-playlists redistribute --rate 1
 
 This changes saved calendar slots and next update dates, not the chosen update
 frequencies, last successful update times or quota counters. Disabled topics and
-daily due dates stay as they are. Pending and unfinished updates remain due;
+daily and every-time due dates stay as they are. Pending and unfinished updates remain due;
 their future repeats can still get better slots. A first-fill backlog, a large
 cleanup or more total demand than your allowance can therefore still produce
 spikes. Redistribution doesn't update YouTube or make API/model calls. It uses
@@ -536,7 +553,23 @@ LLM modes. It needs no extra YouTube or model requests.
 ### Update schedules
 
 The frequency choices are `daily`, `every-2-days`, `every-4-days`, `weekly`,
-`biweekly` (every two weeks), and `monthly`. Set your scheduling timezone once:
+`biweekly` (every two weeks), `monthly`, and `every-time`.
+
+Choose **Every time** for topics such as news or politics that you want checked
+whenever you run an update. They are eligible on every normal auto run, even if
+they were updated earlier the same day. Each topic is visited once per run, and
+disabled topics and quota limits still apply. For example:
+
+```sh
+yt-playlists topics set politics --frequency every-time
+```
+
+The forecast assumes one update run per day for these topics. Running updates
+several times a day uses more quota, including fresh discovery reads even when
+there are no playlist changes. This option doesn't start updates by itself;
+choosing particular times for automatic updates is still a separate step.
+
+Set your scheduling timezone once:
 
 ```sh
 yt-playlists settings --timezone Europe/London
@@ -567,7 +600,7 @@ changes without advancing the queue. Fair turns improve the spread of work, but
 there may still be too little quota for every playlist, and some have no new
 matching videos.
 
-Frequencies count calendar days after a
+The other frequencies count calendar days after a
 successful update, with an automatically assigned calendar slot to spread the
 work out. Ten topics set to every two days will be split five-and-five across
 alternating days. New playlists can be filled straight away; their first

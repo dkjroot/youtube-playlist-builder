@@ -5,6 +5,7 @@ import uuid
 
 from .diagnostics import logger, safe_text
 from .forecast import project, planning_days
+from .forecast_calibration import topic_calibration, signature
 from .schedule import due_topics, parse_time
 
 
@@ -25,17 +26,21 @@ class RunDiagnostics:
             options = json.loads(os.environ.get('YT_PLAYLISTS_FORECAST', '{}'))
             rate = float(options.get('rate', 1))
             mode = options.get('mode', 'budget')
+            calibrate = options.get('calibrate', False)
+            if type(calibrate) is not bool:
+                raise ValueError('Invalid calibration setting')
+            corrections = topic_calibration(state, state.topics(), rate=rate, now=now) if calibrate else {}
             days = options.get('days', 'auto')
             horizon = planning_days(state.topics(), now=now, timezone_name=state.meta('timezone', 'UTC')) if days == 'auto' else int(days)
             if not 1 <= horizon <= 366:
                 raise ValueError('Invalid forecast period')
-            graph = project(state, rate=rate, days=horizon, mode=mode, now=now)
+            graph = project(state, rate=rate, days=horizon, mode=mode, now=now, calibrate=calibrate, calibration=corrections)
             self.data['forecast_source'] = 'web_controls' if 'YT_PLAYLISTS_FORECAST' in os.environ else 'default_scenario'
             self.data['graph_forecast'] = graph
             selected = [state.topic(topic_name)] if topic_name else due_topics(state.topics(), state.meta('cursor', 0), now, all_topics=all_topics)
             self.data['scope_forecast'] = project(
                 state, topics=[dict(t, enabled=True, next_due=None) for t in selected],
-                rate=rate, days=1, now=now
+                rate=rate, days=1, now=now, calibrate=calibrate, calibration=corrections
             )['days'][0]
             for topic in selected:
                 # A manual/all run ignores due dates; keep a separate estimate for
@@ -43,12 +48,15 @@ class RunDiagnostics:
                 forced = dict(topic, enabled=True, next_due=None)
                 self.forecasts[str(topic['id'])] = dict(
                     topic=safe_text(topic['name']), frequency=topic['frequency'],
+                    signature=signature(state, topic),
                     channels=len(topic['channels']), max_videos=topic['max_videos'],
                     max_age_days=topic['max_age_days'], last_success=topic['last_success'],
                     next_due=topic['next_due'],
-                    estimate=project(state, topics=[forced], shared_reads=False, rate=rate, days=1, now=now)['days'][0],
+                    estimate=project(state, topics=[forced], shared_reads=False, rate=rate, days=1, now=now, calibrate=calibrate, calibration=corrections)['days'][0],
                 )
             self.data['forecast_settings'] = dict(rate=rate, mode=mode, days=horizon)
+            if 'calibrate' in options:
+                self.data['forecast_settings']['calibrate'] = calibrate
         except (ValueError, TypeError, KeyError, AttributeError) as error:
             # Diagnostics must not turn an invalid optional scenario into a failed sync.
             self.data['forecast_error'] = safe_text(error)

@@ -215,7 +215,7 @@ ordinary updates attribute legacy entries using metadata already fetched.
 ## Redistributing schedules and budget carry-over
 
 `rebalance.py` precomputes each enabled topic's forecast costs for alternative
-calendar phases. Daily topics keep their dates; pending/partial updates preserve
+calendar phases. Daily and every-time topics keep their dates; pending/partial updates preserve
 their first due time. A bounded coordinate search over at least56days (or the
 automatic visible horizon, whichever is longer) minimises peak daily cost, then
 sum of squared daily costs. Equal-cost arrangements stay put. A final combined
@@ -402,3 +402,53 @@ failure isolation.
 Run diagnostics include conflict-recovery attempts and preserve previous plans
 when a retry rebuilds one, while actual request counters include all failed calls
 and reconciliation overhead. No blanket request-rate limiter is introduced.
+
+
+## Topic-specific forecast calibration
+
+`forecast_calibration.py` derives separate addition and read correction factors
+from up to5 completed samples/topic within30 days, matching the assumed rate.
+Only completed due/all/manual update runs train; previews, failed/paused runs,
+conflict-recovery topics, and playlist create/rename plans are excluded. New
+records carry a SHA256 signature over channel choices, matching rules, slot/age
+limits, cadence, mode and minimum length; mismatches are ignored. Legacy records
+bootstrap using their available name/count/cadence/cap/age fields, with less
+configuration detail than new samples. This is empirical planning, not a measured
+per-channel publishing-rate model.
+
+Learned factors apply to uncertain incoming videos before capacity/overflow
+simulation. Fractional additions carry across a topic's channels/updates so quiet
+channels do not all jump on the same future date. Known expiry/removed-channel
+cleanup and creation retain full costs. Reads have an independent factor; identity
+and subscription overhead remain explicit. Actual recorded quota is never scaled.
+Factors are bounded(additions0.1–1.5,reads0.5–4) to avoid a single quiet run implying
+no future work or an outlier causing unlimited amplification. Raw-add/read inputs
+are retained in each forecast row and diagnostic estimate so later learning
+compares actual plans with unadjusted inputs, avoiding repeated multiplication of
+already corrected estimates. Short histories remain uncertain.
+
+Web defaults to “Learn from completed updates”; unchecking returns the original
+scenario. REST opts in via calibrate=1; project defaults unadjusted for existing
+callers. Run context validates/preserves the option, signatures and raw counters.
+Redistribution precomputes corrections once for all candidate schedule phases and
+uses the same selected mode; CLI opt-in is --calibrate. No sync eligibility,
+allocations, quotas or actual API behavior changes. All forecast calculations are
+local and read-only. Regression tests cover per-topic learning, read/write
+separation, full-cost expiry/recorded usage, incomplete-run exclusion, config/rate
+invalidation, legacy bootstrap, bounded samples and non-compounding factors.
+
+
+## Every-time update frequency
+
+`every-time` topics enter every enabled auto-run snapshot, regardless of their
+saved due timestamp. Completion records the current time as `next_due` and
+`last_success`, without assigning a calendar slot. The fixed queue still visits
+each topic once per run; fair turns and bounded conflict recovery work as before.
+Disabled topics and API budgets retain their usual behaviour. The web editor,
+terminal menu and CLI expose the shared frequency choice.
+
+The daily forecast assumes one invocation per day for every-time topics and says
+so in its assumptions. It includes them even when a saved due time is in the
+future. Redistribution leaves their dates and slot metadata untouched. Timed
+background scheduling and forecasting several invocations a day remain future
+work; selecting this frequency does not install or launch a scheduler.

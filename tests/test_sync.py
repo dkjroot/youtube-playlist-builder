@@ -123,6 +123,40 @@ class SyncTests(unittest.TestCase):
     def writes(self):
         return [call for call in self.server.calls if call[1] != 'list']
 
+    def test_every_time_runs_once_per_invocation_and_finds_same_day_uploads(self):
+        topic = self.topic('news', frequency='every-time')
+        self.topic('daily')
+        self.topic('disabled', frequency='every-time', enabled=False)
+        self.assertEqual(self.sync().run(), 0)
+        self.assertEqual(len(self.state.items(topic['id'])), 1)
+        self.assertEqual(sum(m.startswith('Updated news:') for m in self.messages), 1)
+        self.assertIsNone(self.state.topic('disabled')['last_success'])
+        self.assertNotIn(str(topic['id']), self.state.meta('schedule_slots', {}))
+        self.server.calls.clear()
+        self.messages.clear()
+        self.now += timedelta(hours=2)
+        self.server.video_data['v2'] = {
+            'id': 'v2', 'snippet': {'title': 'Breaking news', 'channelId': CHANNEL,
+                                  'publishedAt': self.now.isoformat()},
+            'status': {'privacyStatus': 'public'}}
+        self.assertEqual(self.sync().run(), 0)
+        self.assertEqual(len(self.state.items(topic['id'])), 2)
+        self.assertEqual(sum(m.startswith('Updated news:') for m in self.messages), 1)
+        self.assertEqual(self.state.topic('daily')['last_success'], NOW.isoformat())
+        self.assertEqual(len(self.writes()), 1)
+        self.server.calls.clear()
+        self.assertEqual(self.sync().run(), 0)
+        self.assertTrue(self.server.calls)
+        self.assertEqual(self.writes(), [])
+
+    def test_every_time_still_pauses_for_quota_and_preview_preserves_state(self):
+        self.topic('news', frequency='every-time')
+        self.assertEqual(self.sync().run(), 0)
+        snapshot = self.state.topics()
+        self.assertEqual(self.sync().run(preview=True), 0)
+        self.assertEqual(self.state.topics(), snapshot)
+        self.assertEqual(self.sync(budget=1).run(), 2)
+
     def test_stagger_ten_two_day_topics_and_forced_all_retains_phases(self):
         for index in range(10):
             self.topic(f'topic {index}', frequency='every-2-days')
