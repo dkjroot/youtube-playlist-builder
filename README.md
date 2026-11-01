@@ -196,15 +196,24 @@ yt-playlists --client-secrets /path/to/client.json --token /path/to/token.json s
 Start the browser interface from the project directory, with the same environment
 and credentials you use for the command line:
 
+Linux / macOS:
+
 ```sh
 source .venv/bin/activate
 # If your model key is in .env, load it as you normally do before starting.
 yt-playlists web
 ```
 
-The app opens at `http://127.0.0.1:8765` and stays running in that terminal until
+Windows PowerShell (with a Windows virtual environment):
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+yt-playlists web
+```
+
+The app opens at `http://127.0.0.1:8722` and stays running in that terminal until
 you press Ctrl-C. Use `web --no-browser` if you'd rather open the address yourself,
-or `web --port 8766` if the normal port is busy. It runs locally, uses the same
+or `web --port 8723` if the normal port is busy. It runs locally, uses the same
 SQLite database, and has a dark theme. No node build or separate frontend install
 is needed. Global `--state`, credential and `--llm-config` options go before `web`
 just as they do before other commands.
@@ -1025,8 +1034,10 @@ modules own each part, how quota is saved, and why the recovery records matter.
 
 ## Running the checks
 
+With your virtual environment active, run this on Windows, Linux or macOS:
+
 ```sh
-python -m unittest discover -s tests -v
+python run_tests.py
 ```
 
 These checks use simulated API responses and don't need Google credentials.

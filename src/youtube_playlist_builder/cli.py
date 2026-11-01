@@ -43,7 +43,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--llm-config", type=Path, default=Path(".local/llm.json"))
     commands = result.add_subparsers(dest="command")
     web = commands.add_parser('web', help='Open local browser management at 127.0.0.1.')
-    web.add_argument('--port', type=positive, default=8765)
+    web.add_argument('--port', type=positive, default=8722)
     web.add_argument('--no-browser', action='store_true')
     backup = commands.add_parser('backup', help='Save a consistent, restorable local data backup; no sign-in needed.')
     backup.add_argument('--output', type=Path, help='New ZIP filename; default: timestamped file in the state folder/backups/.')

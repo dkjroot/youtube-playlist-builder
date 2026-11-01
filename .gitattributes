@@ -1,0 +1,2 @@
+# Keep text files consistent when this checkout is shared by Windows and WSL.
+* text=auto eol=lf

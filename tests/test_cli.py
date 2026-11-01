@@ -6,11 +6,15 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from youtube_playlist_builder.cli import main
+from youtube_playlist_builder.cli import main, parser
 from youtube_playlist_builder.subscriptions import Subscription
 
 
 class CliTests(unittest.TestCase):
+    def test_web_port_defaults_to_8722_and_accepts_override(self):
+        self.assertEqual(parser().parse_args(['web']).port, 8722)
+        self.assertEqual(parser().parse_args(['web', '--port', '9000']).port, 9000)
+
     @patch("youtube_playlist_builder.cli.authenticate")
     def test_export_cannot_overwrite_token(self, authenticate):
         with redirect_stderr(io.StringIO()):

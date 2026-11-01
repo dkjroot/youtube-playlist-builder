@@ -147,7 +147,7 @@ const assert = require('node:assert/strict');
     const cid = 'UC' + 'a'.repeat(22);
     const snapshot = {settings:{single_topic_channels:true}, channels:[{channel_id:cid, title:'Demo channel', description:'Photo lessons and camera settings'}], voice_matches:[], topics:[{id:1, name:'Photography', channels:[], enabled:false}, {id:2, name:'Cameras', channels:[], enabled:false}, {id:3, name:'Synth', channels:[], enabled:false}]};
     let assignment = null;
-    await page.route('http://127.0.0.1:18765/**', async route => {
+    await page.route('http://127.0.0.1:18722/**', async route => {
       const url = new URL(route.request().url());
       if (url.pathname === '/api/state') return route.fulfill({json:snapshot});
       if (url.pathname === '/api/channel') return route.fulfill({json:{videos:[], feed_fetched_at:new Date().toISOString()}});
@@ -168,7 +168,7 @@ const assert = require('node:assert/strict');
         abort() { this.aborted = true; }
       };
     });
-    await page.goto('http://127.0.0.1:18765/organiser');
+    await page.goto('http://127.0.0.1:18722/organiser');
     await page.locator('#channels button').click();
     await page.locator('#hide-assigned').check();
     await page.getByRole('button', {name:'Find a topic', exact:true}).click();

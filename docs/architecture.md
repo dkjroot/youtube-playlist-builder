@@ -165,7 +165,7 @@ apps against the same Google project.
 
 ## Checking changes
 
-Run `python -m unittest discover -s tests -v`. Tests use fake YouTube services and
+Run `python run_tests.py`. Tests use fake YouTube services and
 mock model transports, so they don't need credentials or spend quota. The sync
 suite exercises partial writes, lost replies, account ownership, scheduling,
 filters and idempotence. `test_quota_efficiency.py` checks actual request counts,

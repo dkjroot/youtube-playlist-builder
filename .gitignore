@@ -2,6 +2,7 @@ AGENTS.md
 DEVELOPMENT.md
 agent_docs/
 .venv/
+venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
