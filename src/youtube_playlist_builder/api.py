@@ -16,7 +16,7 @@ import httplib2
 from requests.exceptions import RequestException
 
 from .terminal import waiting
-from .schedule import utcnow
+from .schedule import utcnow, QUOTA_TIMEZONE
 from .diagnostics import logger, safe_text
 
 
@@ -82,7 +82,7 @@ class YouTube:
 
     def day(self):
         """Use YouTube’s Pacific reset date, independently of the user’s scheduling timezone."""
-        return self.now().astimezone(ZoneInfo('America/Los_Angeles')).date().isoformat()
+        return self.now().astimezone(ZoneInfo(QUOTA_TIMEZONE)).date().isoformat()
 
     def remaining(self):
         """Return conservative remaining units across the shared daily and run budgets."""

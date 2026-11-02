@@ -25,7 +25,7 @@ from .organiser import channel_detail, assign_channel, fetch_channel_videos
 from .limits import prepare_limits
 from .forecast import project, planning_days
 from .rebalance import redistribute
-from .schedule import FREQUENCIES, utcnow, due_topics, initialise_staggering
+from .schedule import FREQUENCIES, utcnow, due_topics, initialise_staggering, migrate_quota_days, QUOTA_TIMEZONE
 from .state import State
 from .diagnostics import schedule_notice
 from .topics import validate, edit_topic, load_subscriptions
@@ -229,7 +229,7 @@ def snapshot(args):
         )
         if isinstance(channels, dict):
             channels = channels.get("channels", [])
-        day = utcnow().astimezone(ZoneInfo("America/Los_Angeles")).date().isoformat()
+        day = utcnow().astimezone(ZoneInfo(QUOTA_TIMEZONE)).date().isoformat()
         return dict(
             topics=topics,
             channels=channels,
@@ -426,7 +426,6 @@ def make_server(args, port, *, session_token=None):
                         days = (
                             planning_days(
                                 state.topics(),
-                                timezone_name=state.meta("timezone", "UTC"),
                             )
                             if requested == "auto"
                             else int(requested)
@@ -566,6 +565,12 @@ def make_server(args, port, *, session_token=None):
 
 def serve(args):
     """Run the local UI and saved update schedule until Ctrl-C."""
+    state = State(args.state)
+    try:
+        with state.locked():
+            migrate_quota_days(state)
+    finally:
+        state.close()
     server = make_server(args, args.port)
     url = f"http://127.0.0.1:{server.server_port}"
     print("YouTube playlist manager: " + url, flush=True)

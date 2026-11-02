@@ -59,7 +59,7 @@ class RedistributionTests(unittest.TestCase):
         for row in self.state.topics():
             entry = self.state.meta("schedule_slots")[str(row["id"])]
             following = slot_due(
-                parse_time(row["next_due"]), row["frequency"], "UTC", entry
+                parse_time(row["next_due"]), row["frequency"], entry
             )
             self.assertEqual(
                 (following.date() - parse_time(row["next_due"]).date()).days, 7

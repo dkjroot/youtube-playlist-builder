@@ -48,7 +48,7 @@ class StaggerTests(unittest.TestCase):
             self.assertGreater(parse_time(topic['next_due']), NOW)
             self.assertEqual(state.meta('schedule_slots')[str(topic['id'])]['frequency'], 'weekly')
 
-    def test_monthly_and_dst_slots_remain_local_midnight(self):
+    def test_monthly_and_dst_slots_use_pacific_midnight(self):
         from zoneinfo import ZoneInfo
         with TemporaryDirectory() as directory:
             state = State(Path(directory) / 'state.db')
@@ -61,8 +61,8 @@ class StaggerTests(unittest.TestCase):
             weekly = state.add('weekly', frequency='weekly')
             march = parse_time('2027-03-25T12:00:00Z')
             result = staggered_due(state, weekly, march)
-            self.assertEqual(result.astimezone(ZoneInfo('Europe/London')).hour, 0)
-            self.assertEqual(result.hour, 23)
+            self.assertEqual(result.astimezone(ZoneInfo('America/Los_Angeles')).hour, 0)
+            self.assertEqual(result.hour, 7)
 
     @patch('youtube_playlist_builder.cli.Sync')
     @patch('youtube_playlist_builder.cli.build')

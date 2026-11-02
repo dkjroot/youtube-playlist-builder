@@ -10,7 +10,7 @@ import json
 
 from .forecast import project, planning_days
 from .forecast_calibration import topic_calibration
-from .schedule import DAYS, parse_time, slot_due, utcnow
+from .schedule import DAYS, parse_time, slot_due, utcnow, QUOTA_TIMEZONE
 from zoneinfo import ZoneInfo
 
 
@@ -25,11 +25,11 @@ def redistribute(state, *, rate=1.0, now=None, calibrate=False):
     if type(calibrate) is not bool:
         raise ValueError('Use true or false for forecast calibration.')
     now = now or utcnow()
-    zone = state.meta("timezone", "UTC")
+    zone = QUOTA_TIMEZONE
     topics = [row for row in state.topics() if row["enabled"] and row["channels"]]
     corrections = topic_calibration(state, topics, rate=rate, now=now) if calibrate else {}
     slots = dict(state.meta("schedule_slots", {}))
-    visible_days = planning_days(topics, now=now, timezone_name=zone)
+    visible_days = planning_days(topics, now=now)
     horizon = max(56, visible_days)
     before = project(state, rate=rate, now=now, days=visible_days, calibrate=calibrate, calibration=corrections)
     choices = {}
@@ -90,7 +90,7 @@ def redistribute(state, *, rate=1.0, now=None, calibrate=False):
                 topic["next_due"]
                 if fixed_due
                 else slot_due(
-                    now, frequency, zone, entry, include_today=not already_today
+                    now, frequency, entry, include_today=not already_today
                 ).isoformat()
             )
             if entry != original or due != topic["next_due"]:

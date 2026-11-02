@@ -383,21 +383,23 @@ class SyncTests(unittest.TestCase):
 
 class ScheduleTests(unittest.TestCase):
     def test_intervals(self):
+        from zoneinfo import ZoneInfo
         for frequency, days in [('daily', 1), ('every-2-days', 2), ('every-4-days', 4), ('weekly', 7), ('biweekly', 14)]:
-            self.assertEqual(next_due(NOW, frequency), (NOW + timedelta(days=days)).replace(hour=0))
+            expected = (NOW.astimezone(ZoneInfo('America/Los_Angeles')) + timedelta(days=days)).replace(hour=0)
+            self.assertEqual(next_due(NOW, frequency), expected)
 
     def test_daily_is_due_next_calendar_day_even_if_yesterdays_run_finished_later(self):
         finished = NOW.replace(hour=10, second=23)
         tomorrow_start = (NOW + timedelta(days=1)).replace(hour=10)
         self.assertLess(next_due(finished, 'daily'), tomorrow_start)
 
-    def test_local_midnight_handles_daylight_saving(self):
+    def test_pacific_midnight_handles_daylight_saving(self):
         summer = datetime(2026, 7, 1, 20, tzinfo=timezone.utc)
-        self.assertEqual(next_due(summer, 'daily', 'Europe/London'), datetime(2026, 7, 1, 23, tzinfo=timezone.utc))
+        self.assertEqual(next_due(summer, 'daily'), datetime(2026, 7, 2, 7, tzinfo=timezone.utc))
 
     def test_calendar_month_and_leap_year(self):
-        self.assertEqual(next_due(datetime(2028, 1, 31, tzinfo=timezone.utc), 'monthly').day, 29)
-        self.assertEqual(next_due(datetime(2027, 1, 31, tzinfo=timezone.utc), 'monthly').day, 28)
+        self.assertEqual(next_due(datetime(2028, 1, 31, 12, tzinfo=timezone.utc), 'monthly').day, 29)
+        self.assertEqual(next_due(datetime(2027, 1, 31, 12, tzinfo=timezone.utc), 'monthly').day, 28)
         self.assertEqual(next_due(datetime(2026, 12, 28, tzinfo=timezone.utc), 'monthly').year, 2027)
 
     def test_rotation_skips_disabled_and_not_due_and_wraps(self):

@@ -2,13 +2,17 @@
 
 The CLI assigns stable staggered slots as topics are created/edited; Sync advances
 success dates only after complete updates. Due times are stored in UTC but slots
-use local calendar days. A persisted cursor gives other topics a turn after a
-quota pause; explicit all mode bypasses frequency without enabling disabled topics.
+use Pacific quota days, beginning at Google's midnight reset. A persisted cursor
+gives other topics a turn after a quota pause; explicit all mode bypasses frequency
+without enabling disabled topics.
 """
 
 import calendar
+import json
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+
+QUOTA_TIMEZONE = 'America/Los_Angeles'
 
 FREQUENCIES = ('daily', 'every-2-days', 'every-4-days', 'weekly', 'biweekly', 'monthly', 'every-time')
 DAYS = {'daily': 1, 'every-2-days': 2, 'every-4-days': 4, 'weekly': 7, 'biweekly': 14}
@@ -24,13 +28,13 @@ def parse_time(value):
     return datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(timezone.utc)
 
 
-def next_due(now, frequency, timezone_name='UTC'):
+def next_due(now, frequency):
     # Calendar days, not 24 hours after completion: a daily cron job must not
     # miss tomorrow just because today's update took a few seconds to finish.
-    """Return immediate eligibility or the calendar interval’s local midnight."""
+    """Return immediate eligibility or the calendar interval’s Pacific quota reset."""
     if frequency == 'every-time':
         return now.astimezone(timezone.utc)
-    now = now.astimezone(ZoneInfo(timezone_name))
+    now = now.astimezone(ZoneInfo(QUOTA_TIMEZONE))
     if frequency == 'monthly':
         year, month = (now.year + 1, 1) if now.month == 12 else (now.year, now.month + 1)
         day = min(now.day, calendar.monthrange(year, month)[1])
@@ -61,9 +65,9 @@ def staggered_due(state, topic, completed):
     """
     if topic['frequency'] == 'every-time':
         return completed.astimezone(timezone.utc)
-    zone = state.meta('timezone', 'UTC')
+    zone = QUOTA_TIMEZONE
     local = completed.astimezone(ZoneInfo(zone))
-    nominal = next_due(completed, topic['frequency'], zone).astimezone(ZoneInfo(zone))
+    nominal = next_due(completed, topic['frequency']).astimezone(ZoneInfo(zone))
     frequency = topic['frequency']
     slots = state.meta('schedule_slots', {})
     entry = slots.get(str(topic['id']))
@@ -82,14 +86,14 @@ def staggered_due(state, topic, completed):
         entry = {'frequency': frequency, 'slot': slot(chosen)}
         slots[str(topic['id'])] = entry
         state.set_meta('schedule_slots', slots)
-    return slot_due(completed, frequency, timezone_name=zone, entry=entry)
+    return slot_due(completed, frequency, entry)
 
 
-def slot_due(completed, frequency, timezone_name, entry, *, include_today=False):
-    """Return the next local midnight matching a persisted phase, without modifying state."""
+def slot_due(completed, frequency, entry, *, include_today=False):
+    """Return the next Pacific reset matching a persisted phase, without modifying state."""
     if frequency == 'every-time':
         return completed.astimezone(timezone.utc)
-    local = completed.astimezone(ZoneInfo(timezone_name))
+    local = completed.astimezone(ZoneInfo(QUOTA_TIMEZONE))
     for offset in range(0 if include_today else 1, 63):
         candidate = (local + timedelta(days=offset)).replace(hour=0,minute=0,second=0,microsecond=0)
         if frequency == 'monthly':
@@ -102,14 +106,37 @@ def slot_due(completed, frequency, timezone_name, entry, *, include_today=False)
 
 def initialise_staggering(state, now):
     """Allocate new/changed slots, migrating future schedules without hiding due work."""
+    migrate_quota_days(state)
     slots = state.meta('schedule_slots', {})
     for topic in state.topics():
         entry = slots.get(str(topic['id']))
         if topic['frequency'] == 'every-time':
             continue
-        if not topic['enabled'] or (entry and entry['frequency'] == topic['frequency']):
+        if not topic['enabled'] or state.pending(topic['id']) or (entry and entry['frequency'] == topic['frequency']):
             continue
         anchor = parse_time(topic['last_success']) if topic['last_success'] else now
         scheduled = staggered_due(state, topic, anchor)
         if topic['next_due'] and parse_time(topic['next_due']) > now:
             state.update(topic['id'], next_due=scheduled.isoformat())
+
+
+def migrate_quota_days(state):
+    """Keep existing assigned dates, moving their boundary to Pacific midnight once.
+
+    An old due date labelled Monday remains Monday, now at Google's reset.
+    Pending writes and partial work remain immediately recoverable.
+    Caller holds the state lock; schedule changes and marker commit together.
+    """
+    if state.meta('schedule_day_basis') == QUOTA_TIMEZONE:
+        return
+    old_zone = ZoneInfo(state.meta('timezone', 'UTC'))
+    with state.db:
+        for topic in state.topics():
+            if topic['frequency'] == 'every-time' or not topic['next_due'] or state.pending(topic['id']):
+                continue
+            old = parse_time(topic['next_due']).astimezone(old_zone)
+            boundary = old.replace(hour=0, minute=0, second=0, microsecond=0,
+                                   tzinfo=ZoneInfo(QUOTA_TIMEZONE)).astimezone(timezone.utc)
+            state._update(topic['id'], {'next_due': boundary.isoformat()})
+        state.db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)',
+                         ('schedule_day_basis', json.dumps(QUOTA_TIMEZONE)))

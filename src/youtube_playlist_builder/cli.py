@@ -25,7 +25,7 @@ from .subscriptions import list_subscriptions
 from .playlists import create_test_playlist
 from .api import YouTube, ApiFailure, ConnectionFailure, QuotaStop
 from .state import State
-from .schedule import initialise_staggering, staggered_due, FREQUENCIES, utcnow, due_topics, next_due, parse_time
+from .schedule import initialise_staggering, FREQUENCIES, utcnow, due_topics, QUOTA_TIMEZONE
 from .topics import load_subscriptions, suggest, validate, edit_topic, describe
 from .diagnostics import configure as configure_logging, logger
 from .limits import prepare_limits
@@ -130,7 +130,7 @@ def parser() -> argparse.ArgumentParser:
     settings.add_argument('--daily-budget', type=positive)
     settings.add_argument('--quota-fill', choices=('on', 'off'), help='Daily quota-fill while the web server runs (default on).')
     settings.add_argument('--quota-fill-time', help='Quota-fill time in Europe/London, HH:MM (default 04:00).')
-    settings.add_argument('--timezone', help='Calendar scheduling timezone, such as Europe/London (default UTC).')
+    settings.add_argument('--timezone', help='Automatic update clock timezone, such as Europe/London (default UTC).')
     return result
 
 
@@ -244,9 +244,6 @@ def local_command(args, state):
             except (ZoneInfoNotFoundError, ValueError):
                 raise ValueError('Unknown timezone. Use a name such as Europe/London or UTC.') from None
             state.set_meta('timezone', args.timezone)
-            for topic in state.topics():
-                if topic['last_success'] and topic['next_due']:
-                    state.update(topic['id'], next_due=staggered_due(state, topic, parse_time(topic['last_success'])).isoformat())
         if args.quota_fill_time is not None:
             state.set_meta('quota_fill_time', validate_times([args.quota_fill_time])[0])
         if args.quota_fill is not None:
@@ -255,7 +252,7 @@ def local_command(args, state):
         if args.daily_budget:
             state.set_meta('daily_budget', args.daily_budget)
         print(f"Local daily budget: {state.meta('daily_budget', 9500)} API units.")
-        print(f"Calendar scheduling timezone: {state.meta('timezone', 'UTC')}.")
+        print(f"Automatic update clock timezone: {state.meta('timezone', 'UTC')}.")
         return 0
     if args.command in ('status', 'topics'):
         if args.command == 'status' or args.action == 'list':
@@ -265,7 +262,7 @@ def local_command(args, state):
             if not topics:
                 print('No topics yet. Try suggest-topics, then topics add NAME --suggested.')
             if args.command == 'status':
-                day = utcnow().astimezone(ZoneInfo('America/Los_Angeles')).date().isoformat()
+                day = utcnow().astimezone(ZoneInfo(QUOTA_TIMEZONE)).date().isoformat()
                 quota = state.quota(day)
                 print(f"\nTracked quota for {day} (Pacific): {quota['used']}/{state.meta('daily_budget', 9500)} units"
                       + ('; YouTube quota exhausted.' if quota['exhausted'] else '.'))

@@ -31,7 +31,7 @@ class RunDiagnostics:
                 raise ValueError('Invalid calibration setting')
             corrections = topic_calibration(state, state.topics(), rate=rate, now=now) if calibrate else {}
             days = options.get('days', 'auto')
-            horizon = planning_days(state.topics(), now=now, timezone_name=state.meta('timezone', 'UTC')) if days == 'auto' else int(days)
+            horizon = planning_days(state.topics(), now=now) if days == 'auto' else int(days)
             if not 1 <= horizon <= 366:
                 raise ValueError('Invalid forecast period')
             graph = project(state, rate=rate, days=horizon, mode=mode, now=now, calibrate=calibrate, calibration=corrections)

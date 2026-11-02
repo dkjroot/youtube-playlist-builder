@@ -261,9 +261,10 @@
    </div>
    <section class="panel" id="automatic-updates">
     <h2>Automatic updates</h2>
-    <p class="muted">Add daily times to run Update due, using <span id="schedule-zone">your calendar timezone</span>.
+    <p class="muted">Add daily times to run Update due, using <span id="schedule-zone">your update clock timezone</span>.
      The server checks every five minutes. Times missed while it is stopped are skipped,
-     as are runs when another operation is still going.</p>
+     as are runs when another operation is still going. Topic days start at Google’s midnight Pacific quota reset,
+     normally 08:00 UK time (07:00 during UK/US clock-change gaps), so new recurring work waits until then.</p>
     <form id="schedule-form" class="actions">
      <label>Update time <input id="schedule-time" type="time" step="60" required=""/></label>
      <button id="schedule-add" type="submit">Add time</button>
@@ -305,7 +306,7 @@
      <input id="daily-budget" min="1" required="" type="number"/>
     </label>
     <label>
-     Calendar timezone
+     Automatic update clock timezone
      <input id="timezone" required=""/>
     </label>
     <label>

@@ -13,10 +13,10 @@ from zoneinfo import ZoneInfo
 
 from .limits import channel_age_days
 from .forecast_calibration import topic_calibration
-from .schedule import DAYS, parse_time, next_due, slot_due, utcnow
+from .schedule import DAYS, parse_time, next_due, slot_due, utcnow, QUOTA_TIMEZONE
 
 
-def planning_days(topics, *, now=None, timezone_name="UTC"):
+def planning_days(topics, *, now=None):
     """Cover two cycles of the longest active cadence, including its first due date."""
     now = now or utcnow()
     active = [topic for topic in topics if topic["enabled"] and topic["channels"]]
@@ -33,9 +33,9 @@ def planning_days(topics, *, now=None, timezone_name="UTC"):
                 0,
                 (
                     parse_time(topic["next_due"])
-                    .astimezone(ZoneInfo(timezone_name))
+                    .astimezone(ZoneInfo(QUOTA_TIMEZONE))
                     .date()
-                    - now.astimezone(ZoneInfo(timezone_name)).date()
+                    - now.astimezone(ZoneInfo(QUOTA_TIMEZONE)).date()
                 ).days,
             )
             for topic in active
@@ -67,7 +67,7 @@ def project(
     if mode not in ("demand", "budget"):
         raise ValueError("Choose demand or budget forecast mode.")
     now = now or utcnow()
-    zone = state.meta("timezone", "UTC")
+    zone = QUOTA_TIMEZONE
     today = now.astimezone(ZoneInfo(zone)).replace(
         hour=12, minute=0, second=0, microsecond=0
     )
@@ -190,9 +190,9 @@ def project(
             topic["last_success"] = date.isoformat()
             entry = schedule_slots.get(str(topic["id"]))
             topic["next_due"] = (
-                slot_due(date, topic["frequency"], zone, entry)
+                slot_due(date, topic["frequency"], entry)
                 if entry and entry["frequency"] == topic["frequency"]
-                else next_due(date, topic["frequency"], zone)
+                else next_due(date, topic["frequency"])
             ).isoformat()
         if shared_reads and row["topics"]:
             row["reads"] += 1  # Live account identity check per scheduled run.
@@ -215,6 +215,7 @@ def project(
         demand_days=demand_rows,
         mode=mode,
         budget=state.meta("daily_budget", 9500),
+        day_timezone=QUOTA_TIMEZONE,
         rate=rate,
         calibration=dict(enabled=calibrate, topics=len(calibration), factors=calibration),
         assumptions=(
@@ -225,7 +226,7 @@ def project(
                 else "Requested work assumes scheduled updates finish; it does not carry budget delays forward. "
             )
             + ("Every time topics assume one update run per day; additional runs use more quota. " if any(t["frequency"] == "every-time" for t in topics) else "")
-            + "Reads are approximate. This does not know future uploads or Google’s actual remaining quota. Legacy entries without channel IDs are distributed evenly."
+            + "Days run from midnight to midnight Pacific, matching the YouTube quota reset. Reads are approximate. This does not know future uploads or Google’s actual remaining quota. Legacy entries without channel IDs are distributed evenly."
         ),
     )
 
@@ -239,7 +240,7 @@ def budget_carryover(state, demand_rows, now):
     Existing recorded usage and a confirmed server exhaustion constrain today.
     No forecast writes quota, schedules, success dates, or remote state.
     """
-    day = now.astimezone(ZoneInfo("America/Los_Angeles")).date().isoformat()
+    day = now.astimezone(ZoneInfo(QUOTA_TIMEZONE)).date().isoformat()
     quota = state.quota(day)
     ceiling = state.meta("daily_budget", 9500)
     queue = deque()

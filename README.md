@@ -579,7 +579,7 @@ several times a day uses more quota, including fresh discovery reads even when
 there are no playlist changes. This option doesn't start updates by itself;
 add times under **Automatic updates** to have the running server do that.
 
-Set your scheduling timezone once:
+Set the timezone for your automatic update clock times once:
 
 ```sh
 yt-playlists settings --timezone Europe/London
@@ -610,7 +610,7 @@ changes without advancing the queue. Fair turns improve the spread of work, but
 there may still be too little quota for every playlist, and some have no new
 matching videos.
 
-The other frequencies count calendar days after a
+The other frequencies count Pacific quota days after a
 successful update, with an automatically assigned calendar slot to spread the
 work out. Ten topics set to every two days will be split five-and-five across
 alternating days. New playlists can be filled straight away; their first
@@ -633,12 +633,16 @@ without updating playlists or schedules.
 
 A manual `update NAME` runs even when that topic is disabled or not due.
 
+A scheduling day begins at **midnight Pacific time**, when Google resets the YouTube allowance. This is normally **08:00 UK time**; it is **07:00** during the short periods when the UK and US change clocks on different dates. A topic assigned to Monday therefore becomes due at Monday’s Pacific reset, rather than UK midnight. A 05:30 UK run can still finish outstanding work from the previous quota day, and Every time topics remain eligible on each run, but the new day’s recurring work waits for the reset.
+
+Existing assigned dates move to this boundary automatically when you restart the web server or next run a normal CLI command. Completed history and quota counters stay as recorded, and unfinished work stays due. The forecast labels its days using Pacific dates so each bar covers one Google allowance. Your automatic update clock times keep their configured timezone. Daily quota-fill remains at its separately configured UK time, before the reset.
+
 ### Automatic update times
 
 In the web page's **Automatic updates** section, add as many daily times as you
 want using the time field and **Add time**. Each addition or removal saves
-immediately. Times use the calendar timezone shown beside the list, which you
-can change in Settings. Removing all the times turns these Update due runs off;
+immediately. Times use the update clock timezone shown beside the list, which you
+can change in Settings. These clock times control when the server starts; topic days and due dates always follow Google’s midnight Pacific reset. Removing all the times turns these Update due runs off;
 the separate Daily quota-fill switch controls the end-of-day task below.
 
 While the web server is running, it checks the list every five minutes. If a
@@ -764,7 +768,7 @@ yt-playlists auto --preview
 The default local YouTube budget is 9,500 units per Pacific calendar day. Its
 usage counter is saved in the database and shared by every run using that state
 file. Restarting the script doesn't reset it. Each new quota day starts at
-midnight Pacific time, independently of the timezone used for topic schedules.
+midnight Pacific time, which is also the boundary used for topic due dates and forecast days. The timezone setting controls automatic update clock times and date display.
 Reads and writes made by topic updates are counted before dispatch. Subscription
 exports and the one-off test command aren't included in that local ledger, nor
 are other apps using your Google project, so the count is an estimate of our
