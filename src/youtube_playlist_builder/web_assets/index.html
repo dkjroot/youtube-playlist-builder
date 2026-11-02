@@ -270,8 +270,18 @@
     </form>
     <ul id="schedule-times" class="schedule-times" aria-label="Daily update times"></ul>
     <p class="muted" id="schedule-empty">No automatic update times set.</p>
+    <form id="quota-fill-form" class="actions">
+     <label><input id="quota-fill-enabled" type="checkbox"/> Daily quota-fill</label>
+     <label>UK time <input id="quota-fill-time" type="time" step="60" required=""/></label>
+     <button type="submit">Save quota-fill</button>
+    </form>
+    <p class="muted">Quota-fill defaults to 04:00 Europe/London, including UK clock changes.
+     It gives every enabled playlist a turn, ignoring due dates, and uses the remaining daily allowance
+     for additions and cleanup. It stops when useful work finishes, quota runs short or Pacific midnight arrives.
+     The default ceiling is 10,000 units; a saved daily budget takes precedence. Model limits still apply.
+     Keep the server running; missed or busy runs are skipped. Starts, skips and finishes appear in the console.</p>
     <p class="muted">The forecast still assumes one update run per day for Every time topics.
-     Several scheduled runs can use more quota.</p>
+     The extra quota-fill pass is not included. Several scheduled runs can use more quota.</p>
    </section>
    <section class="panel" id="activity-panel">
     <div class="section-head">

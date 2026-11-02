@@ -27,6 +27,7 @@ from .forecast import project, planning_days
 from .rebalance import redistribute
 from .schedule import FREQUENCIES, utcnow, due_topics, initialise_staggering
 from .state import State
+from .diagnostics import schedule_notice
 from .topics import validate, edit_topic, load_subscriptions
 
 ASSETS = Path(__file__).with_name("web_assets")
@@ -65,6 +66,7 @@ class Jobs:
         """Validate the requested job and start a worker without blocking HTTP progress polls."""
         commands = {
             "auto": ["auto"],
+            "quota-fill": ["auto", "--quota-fill"],
             "all": ["auto", "--all"],
             "update": ["update", "--", name],
             "preview": ["update", "--preview", "--", name],
@@ -149,6 +151,8 @@ class Jobs:
                 """Bound displayed logs; keep a bounded JSON stdout for topic suggestions."""
                 nonlocal output_size
                 for line in stream:
+                    if stdout and job.get("scheduled") and line.startswith(('Quota-fill:', 'API units used this run:')):
+                        schedule_notice(line.rstrip())
                     with self.lock:
                         job["lines"].append(line.rstrip())
                         job["lines"] = job["lines"][-2000:]
@@ -188,6 +192,8 @@ class Jobs:
             with self.lock:
                 job["running"] = False
                 self.process = None
+            if job.get("scheduled"):
+                schedule_notice(f"Scheduled {job['action']}: finished job {job['id']}; exit code {job['code']} (0 completed, 2 budget pause, 1 error, 130 stopped). See Activity for details.")
 
     def snapshot(self):
         """Copy mutable worker data while holding its lock for a consistent JSON response."""
@@ -238,6 +244,8 @@ def snapshot(args):
                     ("single_topic_channels", False),
                     ("timezone", "UTC"),
                     ("schedule_times", []),
+                    ("quota_fill_enabled", True),
+                    ("quota_fill_time", "04:00"),
                     ("mode", "text"),
                     ("minimum_video_seconds", 0),
                     ("subscription_cache_hours", 24),
@@ -502,6 +510,8 @@ def make_server(args, port, *, session_token=None):
                         "single_topic_channels": "--single-topic-channels",
                         "daily_budget": "--daily-budget",
                         "timezone": "--timezone",
+                        "quota_fill_enabled": "--quota-fill",
+                        "quota_fill_time": "--quota-fill-time",
                         "mode": "--mode",
                         "minimum_video_seconds": "--minimum-video-length",
                         "subscription_cache_hours": "--subscription-cache-hours",
@@ -510,7 +520,7 @@ def make_server(args, port, *, session_token=None):
                         raise ValueError("Unknown setting.")
                     words = ["settings"]
                     for key, value in body.items():
-                        if key == "single_topic_channels":
+                        if key in ("single_topic_channels", "quota_fill_enabled"):
                             if type(value) is not bool:
                                 raise ValueError(
                                     "One topic per channel must be true or false."

@@ -134,3 +134,45 @@ class AutoScheduleTests(unittest.TestCase):
         self.assertEqual(jobs.snapshot()['id'], job_id)
         self.assertTrue(jobs.snapshot()['scheduled'])
         self.assertEqual(thread.call_args.kwargs['args'][1], ['auto'])
+
+    def test_quota_fill_defaults_to_four_am_uk_in_winter_and_summer(self):
+        for stamp in ('2026-11-02T03:58:00Z', '2027-07-02T02:58:00Z'):
+            with self.subTest(stamp=stamp):
+                self.jobs.reset_mock()
+                self.now = parse_time(stamp)
+                self.scheduler.last_check = self.now
+                with patch('youtube_playlist_builder.auto_schedule.schedule_notice') as notice:
+                    self.advance(5)
+                self.jobs.start.assert_called_once_with('quota-fill', scheduled=True)
+                self.assertIn('started job', notice.call_args.args[0])
+                self.scheduler.check()
+                self.jobs.start.assert_called_once()
+
+    def test_quota_fill_can_be_disabled_or_rescheduled(self):
+        self.state.set_meta('quota_fill_enabled', False)
+        self.now = parse_time('2026-11-02T03:58:00Z')
+        self.scheduler.last_check = self.now
+        self.advance(5)
+        self.jobs.start.assert_not_called()
+        self.state.set_meta('quota_fill_enabled', True)
+        self.state.set_meta('quota_fill_time', '04:05')
+        self.advance(5)
+        self.jobs.start.assert_called_once_with('quota-fill', scheduled=True)
+
+    def test_fill_coalesces_normal_update_and_logs_busy_skip(self):
+        self.times('04:00')
+        self.now = parse_time('2026-11-02T03:58:00Z')
+        self.scheduler.last_check = self.now
+        self.jobs.start.return_value = None
+        with patch('youtube_playlist_builder.auto_schedule.schedule_notice') as notice:
+            self.advance(5)
+        self.jobs.start.assert_called_once_with('quota-fill', scheduled=True)
+        self.assertIn('skipped: another job', notice.call_args.args[0])
+        self.advance(5)
+        self.jobs.start.assert_called_once()
+
+    def test_quota_fill_job_uses_special_cli_mode(self):
+        jobs = Jobs(self.args)
+        with patch('youtube_playlist_builder.web.threading.Thread') as thread:
+            jobs.start('quota-fill', scheduled=True)
+        self.assertEqual(thread.call_args.kwargs['args'][1], ['auto', '--quota-fill'])

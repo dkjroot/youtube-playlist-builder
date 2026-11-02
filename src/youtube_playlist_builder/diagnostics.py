@@ -48,6 +48,17 @@ def configure(path):
     logger.setLevel(logging.INFO)
 
 
+def schedule_notice(message):
+    """Mirror safe scheduling lifecycle messages to the console and private log."""
+    from datetime import datetime
+    message = safe_text(message)
+    logger.info(message)
+    try:
+        print(f"[{datetime.now().astimezone().isoformat(timespec='seconds')}] {message}", flush=True)
+    except (OSError, ValueError):
+        pass  # A detached console must not prevent scheduled work.
+
+
 def safe_text(value, secrets=()):
     """Redact known secrets and common credential formats, flatten controls and bound length."""
     text = str(value)

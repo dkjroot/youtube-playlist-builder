@@ -277,6 +277,8 @@ function library() {
 }
 /** Saved clock times use the server timezone and never depend on an open browser. */
 function renderSchedule() {
+  $('quota-fill-enabled').checked = state.settings.quota_fill_enabled;
+  $('quota-fill-time').value = state.settings.quota_fill_time;
   $('schedule-zone').textContent = state.settings.timezone;
   const times = state.settings.schedule_times || [];
   $('schedule-empty').hidden = times.length > 0;
@@ -313,6 +315,25 @@ $('schedule-form').onsubmit = e => {
   e.preventDefault();
   if ($('schedule-time').value) {
     saveSchedule([...(state.settings.schedule_times || []), $('schedule-time').value]);
+  }
+};
+
+$('quota-fill-form').onsubmit = async e => {
+  e.preventDefault();
+  const button = e.currentTarget.querySelector('button');
+  button.disabled = true;
+  const settings = {
+    quota_fill_enabled: $('quota-fill-enabled').checked,
+    quota_fill_time: $('quota-fill-time').value,
+  };
+  try {
+    await api('/api/settings', settings);
+    Object.assign(state.settings, settings);
+    notice('Daily quota-fill saved.');
+  } catch (error) {
+    notice(error.message, true);
+  } finally {
+    button.disabled = false;
   }
 };
 

@@ -638,7 +638,8 @@ A manual `update NAME` runs even when that topic is disabled or not due.
 In the web page's **Automatic updates** section, add as many daily times as you
 want using the time field and **Add time**. Each addition or removal saves
 immediately. Times use the calendar timezone shown beside the list, which you
-can change in Settings. Removing all the times turns automatic updates off.
+can change in Settings. Removing all the times turns these Update due runs off;
+the separate Daily quota-fill switch controls the end-of-day task below.
 
 While the web server is running, it checks the list every five minutes. If a
 listed time occurred since the last check, within the last five minutes, it
@@ -663,6 +664,24 @@ extra reads and possible playlist changes from several daily runs.
 This doesn't install a system service or wake your computer. Keep
 `yt-playlists web` running wherever you want the updates to happen. Old videos leave playlists
 on an update, rather than automatically at midnight.
+
+### Daily quota-fill
+
+While the web server runs, a separate quota-fill task starts daily at **04:00 UK time** (`Europe/London`, following UK clock changes). It is on by default. In **Automatic updates**, you can change its time or switch it off with **Daily quota-fill** and **Save quota-fill**. The server checks every five minutes; missed times and runs that find another operation busy are skipped, just like ordinary automatic updates.
+
+This task checks every enabled playlist, even if its next update is not due, and shares additions and cleanup between playlists using the saved rotation. It uses the remaining allowance for the current Pacific quota day, with a default ceiling of 10,000 units. If you have saved a daily budget in Settings, that ceiling takes precedence. Ordinary updates keep their existing 9,500-unit default. YouTube's refusal and model limits still stop work. Quota-fill stops before making another request after Pacific midnight, so a long run cannot start spending tomorrow's allowance.
+
+The task stops once all useful work has finished or the next request cannot fit. It can leave unused units when playlists are already up to date, model limits are reached, or fewer than the units needed for the next change remain. It does not repeat unchanged checks just to spend quota. The forecast does not include this extra daily pass.
+
+The console now prints timestamped scheduler startup, task start, busy-skip and completion messages. Activity still contains the detailed job output, and the private runtime log retains these lifecycle messages too. Restart an already-running server to load these changes.
+
+On Linux or macOS, use these commands in the project's virtual environment. On Windows, run them inside WSL using the same Linux environment; native Windows Python cannot use the project's existing file lock.
+
+```sh
+yt-playlists settings --quota-fill on --quota-fill-time 04:00
+yt-playlists auto --quota-fill
+yt-playlists settings --quota-fill off
+```
 
 ### Minimum video length
 

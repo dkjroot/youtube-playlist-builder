@@ -111,6 +111,22 @@ class WebTests(unittest.TestCase):
             process.assert_not_called()
         self.assertTrue(self.server.scheduler.thread.is_alive())
 
+    def test_quota_fill_settings_save_locally_and_validate(self):
+        settings = json.loads(self.api('/api/state')[1])['settings']
+        self.assertTrue(settings['quota_fill_enabled'])
+        self.assertEqual(settings['quota_fill_time'], '04:00')
+        with patch.object(self.server.jobs, 'start') as start:
+            # Settings use a real, short-lived local CLI without a remote job.
+            self.assertEqual(self.api('/api/settings', {
+                'quota_fill_enabled': False, 'quota_fill_time': '05:30',
+            })[0], 200)
+            start.assert_not_called()
+        settings = json.loads(self.api('/api/state')[1])['settings']
+        self.assertFalse(settings['quota_fill_enabled'])
+        self.assertEqual(settings['quota_fill_time'], '05:30')
+        for body in ({'quota_fill_enabled': 'yes'}, {'quota_fill_time': '25:00'}):
+            self.assertEqual(self.api('/api/settings', body)[0], 400)
+
     def test_same_origin_token_required_for_edits(self):
         self.assertEqual(
             self.api(

@@ -78,6 +78,7 @@ class YouTube:
         self.topic_id = None
         self.run_usage = {}
         self.topic_usage = {}
+        self.stop_day = None
 
     def day(self):
         """Use YouTube’s Pacific reset date, independently of the user’s scheduling timezone."""
@@ -85,6 +86,8 @@ class YouTube:
 
     def remaining(self):
         """Return conservative remaining units across the shared daily and run budgets."""
+        if self.stop_day is not None and self.day() != self.stop_day:
+            return 0
         ledger = self.state.quota(self.day())
         if ledger['exhausted']:
             return 0
@@ -92,6 +95,8 @@ class YouTube:
 
     def check(self, cost):
         """Reject a request before dispatch when its full cost cannot fit either allowance."""
+        if self.stop_day is not None and self.day() != self.stop_day:
+            raise QuotaStop('Quota-fill stopped at the Pacific reset; the new day’s quota is untouched.')
         ledger = self.state.quota(self.day())
         if ledger['exhausted']:
             logger.warning('YouTube call blocked: confirmed daily exhaustion day=%s', self.day())

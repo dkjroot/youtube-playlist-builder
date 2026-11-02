@@ -550,3 +550,7 @@ header {
 .schedule-times li { display:flex; align-items:center; gap:12px; border:1px solid var(--border); border-radius:8px; padding:8px 12px; }
 #schedule-form { align-items:end; }
 #schedule-form label { margin:0; }
+#quota-fill-form { align-items:end; }
+#quota-fill-form label { margin:0; }
+#quota-fill-form label:first-child { display:flex; flex-direction:row; align-items:center; gap:8px; }
+#quota-fill-form input[type="checkbox"] { width:auto; margin:0; }

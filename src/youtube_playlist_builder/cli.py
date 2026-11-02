@@ -31,6 +31,7 @@ from .diagnostics import configure as configure_logging, logger
 from .limits import prepare_limits
 from .rebalance import redistribute
 from .sync import Sync
+from .auto_schedule import validate_times
 from .llm import Classifier, settings as llm_settings
 
 
@@ -102,6 +103,7 @@ def parser() -> argparse.ArgumentParser:
             'reconcile': 'Read a managed playlist to repair local state after manual edits or interruptions.',
         }[command])
         if command == 'auto':
+            operation.add_argument('--quota-fill', action='store_true', help='Use remaining daily quota on all enabled topics; stop at Pacific reset or when useful work finishes.')
             operation.add_argument('--all', action='store_true', help='Update every enabled topic, ignoring due dates.')
         if command != 'auto':
             operation.add_argument('name')
@@ -126,6 +128,8 @@ def parser() -> argparse.ArgumentParser:
                           help='Minimum duration for new additions; 0 disables the filter.')
     settings.add_argument('--mode', choices=('text', 'llm'), help='Select topic discovery and video matching together.')
     settings.add_argument('--daily-budget', type=positive)
+    settings.add_argument('--quota-fill', choices=('on', 'off'), help='Daily quota-fill while the web server runs (default on).')
+    settings.add_argument('--quota-fill-time', help='Quota-fill time in Europe/London, HH:MM (default 04:00).')
     settings.add_argument('--timezone', help='Calendar scheduling timezone, such as Europe/London (default UTC).')
     return result
 
@@ -243,6 +247,11 @@ def local_command(args, state):
             for topic in state.topics():
                 if topic['last_success'] and topic['next_due']:
                     state.update(topic['id'], next_due=staggered_due(state, topic, parse_time(topic['last_success'])).isoformat())
+        if args.quota_fill_time is not None:
+            state.set_meta('quota_fill_time', validate_times([args.quota_fill_time])[0])
+        if args.quota_fill is not None:
+            state.set_meta('quota_fill_enabled', args.quota_fill == 'on')
+        print(f"Daily quota-fill: {'on' if state.meta('quota_fill_enabled', True) else 'off'} at {state.meta('quota_fill_time', '04:00')} Europe/London.")
         if args.daily_budget:
             state.set_meta('daily_budget', args.daily_budget)
         print(f"Local daily budget: {state.meta('daily_budget', 9500)} API units.")
@@ -399,6 +408,11 @@ def main(argv=None) -> int:
                         initialise_staggering(state, utcnow())
                     if args.command not in ('auto', 'update', 'reconcile'):
                         return local_command(args, state)
+                    fill = args.command == 'auto' and args.quota_fill
+                    if fill and args.preview:
+                        raise ValueError('Use auto --all --preview to preview quota-fill work.')
+                    if fill:
+                        args.all = True
                     if args.command == 'auto' and not due_topics(state.topics(), state.meta('cursor', 0), utcnow(), all_topics=args.all):
                         print('No enabled topics are due. Nothing to update.')
                         return 0
@@ -408,8 +422,11 @@ def main(argv=None) -> int:
                     credentials = authenticate(args.client_secrets, args.token,
                         write_access=not preview and args.command != 'reconcile', interactive=False)
                     service = build('youtube', 'v3', credentials=credentials, cache_discovery=False)
-                    daily = args.daily_budget or state.meta('daily_budget', 9500)
+                    daily = args.daily_budget or state.meta('daily_budget', 10000 if fill else 9500)
                     api = YouTube(service, state, daily_budget=daily, run_budget=args.budget or daily)
+                    if fill:
+                        api.stop_day = api.day()
+                        print(f"Quota-fill: {api.remaining()} units available this Pacific day (ceiling {daily}); visiting all enabled playlists in fair turns. Stops when work finishes or the next change cannot fit.")
                     classifier = (Classifier(state, llm_settings(args.llm_config))
                                   if state.meta('mode', 'text') == 'llm' and args.command != 'reconcile' else None)
                     try:
