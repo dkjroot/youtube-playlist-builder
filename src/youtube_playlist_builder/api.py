@@ -79,6 +79,7 @@ class YouTube:
         self.run_usage = {}
         self.topic_usage = {}
         self.stop_day = None
+        self.successful_calls = {}
 
     def day(self):
         """Use YouTube’s Pacific reset date, independently of the user’s scheduling timezone."""
@@ -103,10 +104,10 @@ class YouTube:
             raise QuotaStop('YouTube reported the daily quota exhausted. Resume after midnight Pacific time.')
         if ledger['used'] + cost > self.daily_budget:
             logger.warning('YouTube call blocked: local daily budget used=%s limit=%s next_cost=%s', ledger['used'], self.daily_budget, cost)
-            raise QuotaStop('The local daily API budget is used up. Progress has been saved.')
+            raise QuotaStop(f"The next YouTube request needs {cost} units, but only {max(0, self.daily_budget - ledger['used'])} remain in the daily budget. Progress has been saved.")
         if self.spent + cost > self.run_budget:
             logger.warning('YouTube call blocked: local run budget used=%s limit=%s next_cost=%s', self.spent, self.run_budget, cost)
-            raise QuotaStop('The API budget for this run is used up. Progress has been saved.')
+            raise QuotaStop(f"The next YouTube request needs {cost} units, but only {max(0, self.run_budget - self.spent)} remain in this run's budget. Progress has been saved.")
 
     def call(self, resource, method='list', **parameters):
         """Charge before dispatch and translate failures without automatic write retries.
@@ -130,6 +131,7 @@ class YouTube:
         try:
             with waiting(f'YouTube: {resource}.{method}…'):
                 result = getattr(getattr(self.service, resource)(), method)(**parameters).execute(num_retries=0)
+            self.successful_calls[key] = self.successful_calls.get(key, 0) + 1
             logger.info('YouTube response resource=%s method=%s elapsed=%.2fs outcome=success',
                         resource, method, time.monotonic() - started)
             return result

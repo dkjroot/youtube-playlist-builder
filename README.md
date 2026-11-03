@@ -677,7 +677,7 @@ This task checks every enabled playlist, even if its next update is not due, and
 
 The task stops once all useful work has finished or the next request cannot fit. It can leave unused units when playlists are already up to date, model limits are reached, or fewer than the units needed for the next change remain. It does not repeat unchanged checks just to spend quota. The forecast does not include this extra daily pass.
 
-The console now prints timestamped scheduler startup, task start, busy-skip and completion messages. Activity still contains the detailed job output, and the private runtime log retains these lifecycle messages too. Restart an already-running server to load these changes.
+The console prints timestamped scheduler startup, task start and busy-skip messages. Each update ends with a plain-language summary: topics completed, unfinished and failed; topics not reached; videos added and entries removed; playlists created or renamed; quota used and remaining; and why it stopped. A budget pause counts as unfinished work, rather than a failed topic. Change counts use successful API replies, so rejected requests and writes with uncertain replies are not counted as confirmed changes. Activity contains the same summary and detailed job output, and the private runtime log retains scheduled summaries too. Restart an already-running server to load these changes.
 
 On Linux or macOS, use these commands in the project's virtual environment. On Windows, run them inside WSL using the same Linux environment; native Windows Python cannot use the project's existing file lock.
 

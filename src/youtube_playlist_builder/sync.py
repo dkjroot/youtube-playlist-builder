@@ -18,6 +18,7 @@ from .channel_order import addition_turns
 from .terminal import progress
 from .diagnostics import logger, safe_text
 from .run_diagnostics import RunDiagnostics
+from .run_summary import RunSummary
 from .api import ApiFailure, ConnectionFailure, QuotaStop
 from .schedule import staggered_due, initialise_staggering, due_topics, parse_time, playlist_title, utcnow
 
@@ -41,6 +42,7 @@ class Sync:
         self.api, self.state, self.now, self.report = api, state, now, report
         self.classifier = classifier
         self.run_monitor = None
+        self.summary = None
         self.subscribed = None
         self.owner = None
         self.refresh_subscriptions = refresh_subscriptions
@@ -498,11 +500,15 @@ class Sync:
             self.run_monitor.data.get("topic_errors", {}).pop(str(topic["id"]), None)
         self.state.update(topic['id'], last_success=finished.isoformat(),
                           next_due=staggered_due(self.state, topic, finished).isoformat(), last_error=None)
+        if self.summary:
+            self.summary.completed.add(topic['id'])
+            self.summary.failed.discard(topic['id'])
         self.report(f"Updated {topic['name']}: https://www.youtube.com/playlist?list={topic['playlist_id']}")
 
     def run(self, *, topic_name=None, preview=False, reconcile_only=False, all_topics=False):
         """Capture a pre-run forecast and final usage without changing sync outcomes."""
         options = dict(topic_name=topic_name, preview=preview, reconcile_only=reconcile_only, all_topics=all_topics)
+        self.summary = RunSummary(self.api, preview=preview, reconcile=reconcile_only)
         try:
             self.run_monitor = RunDiagnostics(self, **options)
         except Exception:
@@ -510,10 +516,21 @@ class Sync:
         try:
             code = self._run(**options)
         except BaseException as error:
+            self.summary.reason = safe_text(error) or 'The run was interrupted.'
             self.finish_diagnostics(130 if isinstance(error, KeyboardInterrupt) else 1, error)
+            self.report_summary(130 if isinstance(error, KeyboardInterrupt) else 1)
             raise
         self.finish_diagnostics(code)
+        self.report_summary(code)
         return code
+
+    def report_summary(self, code):
+        """A reporting failure must not replace the outcome of remote work."""
+        try:
+            for line in self.summary.lines(code):
+                self.report(line)
+        except Exception:
+            logger.warning('Could not produce run summary; see update output for the outcome')
 
     def finish_diagnostics(self, code, error=None):
         """A diagnostic failure must never mask the actual update result."""
@@ -536,6 +553,7 @@ class Sync:
             topics = [self.state.topic(topic_name)]
         else:
             topics = due_topics(self.state.topics(), self.state.meta('cursor', 0), self.now(), all_topics=all_topics)
+        self.summary.selected = {topic['id'] for topic in topics}
         if not topics:
             self.report('No enabled topics are due. Nothing to update.')
             return 0
@@ -543,6 +561,7 @@ class Sync:
         try:
             self.identify()
         except QuotaStop as error:
+            self.summary.reason = safe_text(error)
             self.report(str(error))
             return 2
         failed = False
@@ -553,6 +572,7 @@ class Sync:
         automatic = not topic_name and not preview and not reconcile_only
         while queue:
             topic_id, steps = queue.popleft()
+            self.summary.attempted.add(topic_id)
             topic = self.state.by_id(topic_id)
             self.api.topic_id = topic_id
             allowance = max(1, min(5, self.api.remaining() // (50 * (len(queue) + 1)))) if automatic else None
@@ -568,6 +588,7 @@ class Sync:
             try:
                 if reconcile_only:
                     self.reconcile(topic)
+                    self.summary.completed.add(topic_id)
                     self.report(f"Reconciled {topic['name']} with YouTube.")
                     continue
                 if steps is None:
@@ -575,6 +596,8 @@ class Sync:
                 if not automatic:
                     for _ in steps:
                         pass
+                    if preview:
+                        self.summary.completed.add(topic_id)
                     continue
                 completed = False
                 for _ in range(allowance):
@@ -587,6 +610,7 @@ class Sync:
             except StopIteration:
                 pass
             except QuotaStop as error:
+                self.summary.reason = safe_text(error)
                 if not preview:
                     self.state.update(topic_id, last_error=str(error))
                 if self.run_monitor:
@@ -617,6 +641,8 @@ class Sync:
                     queue.append((topic_id, None))
                     continue
                 failed = True
+                self.summary.failed.add(topic_id)
+                self.summary.reason = safe_text(error)
                 if self.run_monitor:
                     self.run_monitor.data.setdefault("topic_errors", {})[str(topic_id)] = safe_text(error)
                 logger.warning("Topic failed topic=%s reason=%s", safe_text(topic["name"]), safe_text(error))
@@ -625,5 +651,4 @@ class Sync:
                 self.report(f"Could not update {topic['name']}: {error}")
                 if isinstance(error, ConnectionFailure) or (isinstance(error, ApiFailure) and error.stop_run and not conflict):
                     return 1
-        self.report(f"API units used this run: {self.api.spent}.")
         return 1 if failed else 0

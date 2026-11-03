@@ -129,6 +129,7 @@ class Jobs:
         """Collect both streams without pipe deadlock; successful suggestion JSON becomes UI data."""
         output = []
         output_size = 0
+        summary_seen = False
         try:
             env = dict(os.environ, YT_PLAYLISTS_PROGRESS="1")
             env.pop('YT_PLAYLISTS_FORECAST', None)
@@ -149,9 +150,11 @@ class Jobs:
 
             def collect(stream, stdout=False):
                 """Bound displayed logs; keep a bounded JSON stdout for topic suggestions."""
-                nonlocal output_size
+                nonlocal output_size, summary_seen
                 for line in stream:
-                    if stdout and job.get("scheduled") and line.startswith(('Quota-fill:', 'API units used this run:')):
+                    if stdout and line.startswith('Run summary:'):
+                        summary_seen = True
+                    if stdout and job.get("scheduled") and line.startswith(('Quota-fill:', 'Run summary:', 'Topics:', 'Changes confirmed:', 'YouTube quota:')):
                         schedule_notice(line.rstrip())
                     with self.lock:
                         job["lines"].append(line.rstrip())
@@ -192,8 +195,9 @@ class Jobs:
             with self.lock:
                 job["running"] = False
                 self.process = None
-            if job.get("scheduled"):
-                schedule_notice(f"Scheduled {job['action']}: finished job {job['id']}; exit code {job['code']} (0 completed, 2 budget pause, 1 error, 130 stopped). See Activity for details.")
+            if job.get("scheduled") and not summary_seen:
+                outcome = {0: 'completed', 1: 'failed', 2: 'paused; progress saved', 130: 'stopped'}.get(job['code'], 'stopped unexpectedly')
+                schedule_notice(f"Scheduled {job['action']}: {outcome}. Detailed counts are unavailable; see Activity for details.")
 
     def snapshot(self):
         """Copy mutable worker data while holding its lock for a consistent JSON response."""

@@ -90,6 +90,7 @@ class RunDiagnostics:
                        completed_topics=sorted(self.completed),
                        usage=self.sync.api.run_usage, usage_by_topic=self.sync.api.topic_usage,
                        actual_units=self.sync.api.spent,
+                       summary=self.sync.summary.snapshot() if self.sync.summary else None,
                        llm_calls=self.sync.classifier.calls if self.sync.classifier is not None and hasattr(self.sync.classifier, 'calls') else None)
         # Mock classifiers may not expose an integer counter.
         if not isinstance(payload['llm_calls'], (int, type(None))):

@@ -38,7 +38,7 @@ class QuotaFillTests(unittest.TestCase):
         sync = self.sync()
         self.assertEqual(sync.run(all_topics=True), 0)
         self.assertLess(sync.api.spent, 50)
-        self.assertIn('API units used this run:', self.messages[-1])
+        self.assertTrue(any('Run summary: Completed.' in line for line in self.messages))
 
     def test_pacific_reset_blocks_requests_without_charging_new_day(self):
         self.now = parse_time('2026-11-02T07:59:59Z')
@@ -83,13 +83,14 @@ class QuotaFillTests(unittest.TestCase):
             jobs._work(job, ['auto', '--quota-fill'])
         self.assertFalse(job['running'])
         self.assertEqual(job['code'], 1)
-        self.assertIn('finished job test; exit code 1', notice.call_args.args[0])
+        self.assertIn('Scheduled quota-fill: failed.', notice.call_args.args[0])
+        self.assertNotIn('exit code', notice.call_args.args[0])
 
     def test_scheduled_worker_mirrors_usage_and_success_to_console(self):
         jobs = Jobs(None)
         job = dict(id='test', action='quota-fill', scheduled=True, running=True,
                    code=None, lines=[], forecast=None)
-        process = SimpleNamespace(stdout=io.StringIO('API units used this run: 105.\n'),
+        process = SimpleNamespace(stdout=io.StringIO('Run summary: Completed.\nTopics: 1 of 1 completed; 0 unfinished; 0 failed.\nYouTube quota: 105 units used this run.\n'),
                                   stderr=io.StringIO(''), wait=lambda: 0)
         with patch.object(jobs, 'base', return_value=[]), \
              patch('youtube_playlist_builder.web.subprocess.Popen') as popen, \
@@ -98,5 +99,6 @@ class QuotaFillTests(unittest.TestCase):
             jobs._work(job, ['auto', '--quota-fill'])
         self.assertFalse(job['running'])
         self.assertEqual(job['code'], 0)
-        self.assertEqual(notice.call_args_list[0].args[0], 'API units used this run: 105.')
-        self.assertIn('finished job test; exit code 0', notice.call_args.args[0])
+        self.assertEqual(notice.call_args_list[0].args[0], 'Run summary: Completed.')
+        self.assertEqual(notice.call_args.args[0], 'YouTube quota: 105 units used this run.')
+        self.assertEqual(notice.call_count, 3)

@@ -412,6 +412,7 @@ def main(argv=None) -> int:
                         args.all = True
                     if args.command == 'auto' and not due_topics(state.topics(), state.meta('cursor', 0), utcnow(), all_topics=args.all):
                         print('No enabled topics are due. Nothing to update.')
+                        print('Run summary: Completed. No topics needed updating; 0 topics updated and no API quota used.')
                         return 0
                     if args.command != 'auto':
                         state.topic(args.name)  # Validate before attempting authentication.
