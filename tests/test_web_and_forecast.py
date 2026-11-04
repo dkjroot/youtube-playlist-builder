@@ -146,6 +146,32 @@ class WebTests(unittest.TestCase):
             self.api("/api/state", extra={"Host": "hostile.example"})[0], 403
         )
 
+    def test_loopback_hostnames_allow_pages_and_authenticated_edits(self):
+        for hostname in ('127.0.0.1', 'localhost'):
+            with self.subTest(hostname=hostname):
+                authority = f'{hostname}:{self.server.server_port}'
+                headers = {'Host': authority, 'Origin': f'http://{authority}'}
+                for path in ('/', '/organiser', '/app.js'):
+                    self.assertEqual(self.request('GET', path, headers=headers)[0], 200)
+                self.assertEqual(self.api('/api/state', extra=headers)[0], 200)
+                self.assertEqual(self.api('/api/schedule', {'times': ['08:00']}, headers)[0], 200)
+                self.assertEqual(self.request('POST', '/api/schedule', {'times': []}, headers)[0], 403)
+
+    def test_loopback_aliases_preserve_host_and_origin_restrictions(self):
+        port = self.server.server_port
+        for host in ('hostile.example', f'localhost:{port + 1}',
+                     f'localhost.evil.example:{port}', 'localhost'):
+            with self.subTest(host=host):
+                headers = {'Host': host, 'Origin': f'http://{host}'}
+                self.assertEqual(self.request('GET', '/', headers=headers)[0], 403)
+                self.assertEqual(self.api('/api/schedule', {'times': []}, headers)[0], 403)
+        for hostname, other in (('localhost', '127.0.0.1'), ('127.0.0.1', 'localhost')):
+            for origin in (f'http://{other}:{port}', f'https://{hostname}:{port}',
+                           f'http://{hostname}:{port + 1}', 'https://elsewhere.example'):
+                with self.subTest(hostname=hostname, origin=origin):
+                    headers = {'Host': f'{hostname}:{port}', 'Origin': origin}
+                    self.assertEqual(self.api('/api/schedule', {'times': []}, headers)[0], 403)
+
     def test_topic_allocations_save_and_change_total_without_api_calls(self):
         body = {
             "action": "add",

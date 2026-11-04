@@ -368,12 +368,19 @@ def make_server(args, port, *, session_token=None):
             self.end_headers()
             self.wfile.write(data)
 
+        def allowed_host(self):
+            """Accept only the two local hostnames on this server's actual port."""
+            return self.headers.get("Host") in {
+                f"127.0.0.1:{self.server.server_port}",
+                f"localhost:{self.server.server_port}",
+            }
+
         def authorised(self):
             """Check Host plus the per-launch token, rejecting cross-origin browser requests."""
-            authority = f"127.0.0.1:{self.server.server_port}"
+            authority = self.headers.get("Host")
             origin = self.headers.get("Origin")
             return (
-                self.headers.get("Host") == authority
+                self.allowed_host()
                 and (not origin or origin == "http://" + authority)
                 and secrets.compare_digest(
                     self.headers.get("X-YT-Local", "").encode(), token.encode()
@@ -383,7 +390,7 @@ def make_server(args, port, *, session_token=None):
         def do_GET(self):
             """Read local state/jobs or serve packaged management assets."""
             path = urlsplit(self.path).path
-            if self.headers.get("Host") != f"127.0.0.1:{self.server.server_port}":
+            if not self.allowed_host():
                 return self.reply(403, {"error": "Use the printed loopback URL."})
             if path in ("/", "/organiser"):
                 page = (

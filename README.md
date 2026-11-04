@@ -212,7 +212,8 @@ yt-playlists web
 ```
 
 The app opens at `http://127.0.0.1:8722` and stays running in that terminal until
-you press Ctrl-C. Use `web --no-browser` if you'd rather open the address yourself,
+you press Ctrl-C. You can also use `http://localhost:8722` in your browser.
+Use `web --no-browser` if you'd rather open the address yourself,
 or `web --port 8723` if the normal port is busy. It runs locally, uses the same
 SQLite database, and has a dark theme. No node build or separate frontend install
 is needed. Global `--state`, credential and `--llm-config` options go before `web`
